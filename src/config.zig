@@ -24,20 +24,87 @@ pub const Config = struct {
     selectedProfile: ?ProfileRef = null,
 };
 
-/// Backing storage for `defaultRepos`. Returned as a mutable slice because the
-/// interface has no allocator; callers may copy from it before mutating.
-var seeded_repos = [_]Repo{
-    .{ .owner = "cumsauce", .name = "gore" },
-    .{ .owner = "cumsauce", .name = "foley" },
-    .{ .owner = "cumsauce", .name = "earshot" },
-    .{ .owner = "cumsauce", .name = "stalker" },
-    .{ .owner = "cumsauce", .name = "aorta" },
-    .{ .owner = "desocketed", .name = "yakvc" },
-};
+/// The built-in seed list, embedded so a fresh install works, and mirrored to
+/// a user-editable `<config-dir>/defaults.json` on first run. `defaultRepos`
+/// prefers that user file when present, so the seed can be changed without a
+/// recompile.
+const embedded_defaults = @embedFile("defaults.json");
 
-/// The repositories modsync seeds a fresh config with, in order.
-pub fn defaultRepos() []Repo {
-    return &seeded_repos;
+const DefaultsFile = struct { repos: []Repo };
+
+/// The repositories modsync seeds a fresh config with, in order. Reads
+/// `<config-dir>/defaults.json` if it exists; otherwise the embedded list.
+/// Caller owns the result (free with `freeRepos`).
+pub fn defaultRepos(allocator: Allocator) ![]Repo {
+    const path = try defaultsPath(allocator);
+    defer allocator.free(path);
+
+    var threaded = makeThreaded();
+    const io = threaded.io();
+    if (std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited)) |bytes| {
+        defer allocator.free(bytes);
+        if (parseDefaults(allocator, bytes)) |repos| {
+            return repos;
+        } else |_| {
+            // Malformed user file: fall back to the embedded defaults rather
+            // than failing startup.
+        }
+    } else |_| {}
+
+    return try parseDefaults(allocator, embedded_defaults);
+}
+
+/// Parse a defaults.json blob into an owned `[]Repo`.
+fn parseDefaults(allocator: Allocator, json: []const u8) ![]Repo {
+    const parsed = try std.json.parseFromSlice(DefaultsFile, allocator, json, .{});
+    defer parsed.deinit();
+
+    const out = try allocator.alloc(Repo, parsed.value.repos.len);
+    errdefer allocator.free(out);
+
+    var built: usize = 0;
+    errdefer for (out[0..built]) |r| freeRepo(allocator, r);
+
+    for (parsed.value.repos, out) |s, *d| {
+        const owner = try allocator.dupe(u8, s.owner);
+        errdefer allocator.free(owner);
+        const name = try allocator.dupe(u8, s.name);
+        errdefer allocator.free(name);
+        d.* = .{ .owner = owner, .name = name };
+        built += 1;
+    }
+    return out;
+}
+
+/// Free a repo slice produced by `defaultRepos`.
+pub fn freeRepos(allocator: Allocator, repos: []Repo) void {
+    for (repos) |r| freeRepo(allocator, r);
+    allocator.free(repos);
+}
+
+/// Path to the user-editable `<config-dir>/defaults.json`. Caller owns.
+pub fn defaultsPath(allocator: Allocator) ![]const u8 {
+    const cfg_path = try configPath(allocator);
+    defer allocator.free(cfg_path);
+    const dir = std.fs.path.dirname(cfg_path) orelse cfg_path;
+    return try std.fs.path.join(allocator, &.{ dir, "defaults.json" });
+}
+
+/// Write the embedded defaults to `<config-dir>/defaults.json` if absent, so
+/// the seed is discoverable and editable. Best-effort; never fails startup.
+pub fn writeDefaultsIfAbsent() void {
+    var threaded = makeThreaded();
+    const io = threaded.io();
+    const path = defaultsPath(std.heap.page_allocator) catch return;
+    defer std.heap.page_allocator.free(path);
+
+    std.Io.Dir.cwd().access(io, path, .{}) catch {
+        const dir = std.fs.path.dirname(path) orelse return;
+        std.Io.Dir.cwd().access(io, dir, .{}) catch {
+            std.Io.Dir.cwd().createDirPath(io, dir) catch return;
+        };
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = embedded_defaults }) catch return;
+    };
 }
 
 /// Per-OS standard Minecraft directory, with `~` left un-expanded (static
@@ -236,8 +303,9 @@ fn dupeConfig(allocator: Allocator, src: Config) !Config {
     };
 }
 
-test "defaultRepos returns the seeded repos in order" {
-    const repos = defaultRepos();
+test "defaultRepos returns the embedded seed repos in order" {
+    const repos = try defaultRepos(std.testing.allocator);
+    defer freeRepos(std.testing.allocator, repos);
     try std.testing.expectEqual(@as(usize, 6), repos.len);
     try std.testing.expectEqualStrings("cumsauce", repos[0].owner);
     try std.testing.expectEqualStrings("gore", repos[0].name);
@@ -252,6 +320,16 @@ test "defaultRepos returns the seeded repos in order" {
         try std.testing.expect(r.installedVersion == null);
         try std.testing.expect(r.installedJar == null);
     }
+}
+
+test "parseDefaults reads a user defaults.json blob" {
+    const repos = try parseDefaults(std.testing.allocator,
+        \\{ "repos": [ { "owner": "x", "name": "y" }, { "owner": "p", "name": "q" } ] }
+    );
+    defer freeRepos(std.testing.allocator, repos);
+    try std.testing.expectEqual(@as(usize, 2), repos.len);
+    try std.testing.expectEqualStrings("x", repos[0].owner);
+    try std.testing.expectEqualStrings("q", repos[1].name);
 }
 
 test "configPath is absolute and ends in modsync/config.json" {

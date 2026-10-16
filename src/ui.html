@@ -107,7 +107,10 @@ button.danger { color: var(--err); }
   <section class="card">
     <div class="row" style="justify-content:space-between; margin-bottom:4px;">
       <h2 style="margin:0;">Tracked mods</h2>
-      <button id="refresh">Refresh all</button>
+      <div class="row" style="gap:8px;">
+        <button id="restore">Restore defaults</button>
+        <button id="refresh">Refresh all</button>
+      </div>
     </div>
     <ul id="list" class="list"></ul>
     <div id="empty" class="empty" hidden>No mods tracked yet — add a repo below.</div>
@@ -270,6 +273,17 @@ button.danger { color: var(--err); }
   }
 
   $("rescan").addEventListener("click", () => loadLaunchers());
+
+  $("restore").addEventListener("click", async () => {
+    if (!confirm("Replace your tracked repos with the defaults file?")) return;
+    let ok = false;
+    try { ok = asBool(await call("restoreDefaults")); } catch (e) {}
+    if (!ok) {
+      addMsg.className = "hint err";
+      addMsg.textContent = "Couldn't restore defaults.";
+    }
+    await load();  // re-fetch + re-render
+  });
 
   // Flush a state push that arrived before this script ran.
   if (window.__pendingState) {

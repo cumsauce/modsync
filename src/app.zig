@@ -196,6 +196,7 @@ pub const App = struct {
         _ = c.webview_bind(w, "startRefresh", cbStartRefresh, app_arg);
         _ = c.webview_bind(w, "listLaunchers", cbListLaunchers, app_arg);
         _ = c.webview_bind(w, "selectProfile", cbSelectProfile, app_arg);
+        _ = c.webview_bind(w, "restoreDefaults", cbRestoreDefaults, app_arg);
 
         _ = c.webview_run(w);
 
@@ -634,6 +635,30 @@ fn cbSelectProfile(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callco
     }
 }
 
+/// restoreDefaults() → "true"/"false"; replaces the repo list with the seed
+/// (from `<config-dir>/defaults.json`, else embedded) and persists.
+fn cbRestoreDefaults(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    _ = req;
+    const app = appFromArg(arg);
+
+    const seeded = config_mod.defaultRepos(app.allocator) catch {
+        respond(app, id, "false");
+        return;
+    };
+
+    app.mutex.lock();
+    defer app.mutex.unlock();
+
+    freeRepoSlice(app.allocator, app.cfg.repos);
+    app.cfg.repos = seeded; // ownership transferred to the config
+
+    if (config_mod.save(&app.cfg)) {
+        respond(app, id, "true");
+    } else |_| {
+        respond(app, id, "false");
+    }
+}
+
 /// addRepo("owner/name") → "true"/"false"; appends + persists.
 fn cbAddRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
     const app = appFromArg(arg);
@@ -843,9 +868,10 @@ test "buildStateJson: repo without a status row gets an empty status" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"\"") != null);
 }
 
-test "cloneConfig deep-copies the global seed so mutation never touches it" {
+test "cloneConfig deep-copies the seed so mutation never touches it" {
     const alloc = std.testing.allocator;
-    const original = config_mod.defaultRepos();
+    const original = try config_mod.defaultRepos(alloc);
+    defer config_mod.freeRepos(alloc, original);
 
     const cfg = try cloneConfig(alloc, Config{
         .minecraftDir = "~/mc",
