@@ -14,7 +14,8 @@ const Repo = config_mod.Repo;
 // Pure state-JSON builder (unit-testable offline)
 // ============================================================================
 
-/// One row of per-repo status for the UI, paired with a Config repo by index.
+/// One row of per-repo status for the UI, matched to a Config repo by
+/// owner AND name (never by index).
 pub const RepoStatus = struct {
     owner: []const u8,
     name: []const u8,
@@ -24,9 +25,11 @@ pub const RepoStatus = struct {
 /// Emit the JSON blob the UI (Task 7) renders:
 /// `{"minecraftDir":"...","repos":[{"owner":...,"name":...,"installedVersion":
 /// "v0.1.3"|null,"installedJar":...|null,"status":"..."}, ...]}`.
-/// `statuses[i]` pairs with `cfg.repos[i]` by index; repos past the end of
-/// `statuses` get an empty status. Everything is serialized immediately, so
-/// nothing is retained past the call.
+/// Each entry of `statuses` is paired with the repo whose `owner` AND `name`
+/// match it (linear scan — the config can mutate mid-refresh, so index
+/// pairing would drift); repos with no matching status get an empty status.
+/// One row per `cfg.repos` entry, in `cfg.repos` order. Everything is
+/// serialized immediately, so nothing is retained past the call.
 pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []const RepoStatus) ![]u8 {
     var out = try std.ArrayList(u8).initCapacity(allocator, 256);
     errdefer out.deinit(allocator);
@@ -54,7 +57,14 @@ pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []cons
             try out.appendSlice(allocator, "null");
         }
         try out.appendSlice(allocator, ",\"status\":");
-        const status: []const u8 = if (i < statuses.len) statuses[i].status else "";
+        const status: []const u8 = blk: {
+            for (statuses) |s| {
+                if (std.mem.eql(u8, s.owner, repo.owner) and std.mem.eql(u8, s.name, repo.name)) {
+                    break :blk s.status;
+                }
+            }
+            break :blk "";
+        };
         try appendJsonString(allocator, &out, status);
         try out.appendSlice(allocator, "}");
     }
@@ -106,8 +116,12 @@ pub const App = struct {
     /// Guards `cfg` across the GUI thread (bind callbacks) and the refresh
     /// worker thread.
     mutex: SpinMutex = .{},
-    /// True while a refresh worker is running (guards double-spawn).
+    /// True while a refresh worker is running (guards double-spawn; also read
+    /// by `run`'s drain loop after `webview_run` returns).
     refreshing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    /// Set under the mutex once the webview handle is destroyed; worker paths
+    /// check it before calling `webview_dispatch` on `w`.
+    stopped: bool = false,
 
     /// Store a deep, allocator-owned clone of `cfg`. The caller's copy (which
     /// may slice the global seed from `defaultRepos()`) is left untouched.
@@ -117,6 +131,9 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
+        // Safe because `run` drains the refresh worker and destroys the
+        // webview (setting `stopped`) before returning; `main` calls `deinit`
+        // only after `run` completes, so no worker can touch `cfg`/`w` here.
         config_mod.freeConfig(self.allocator, self.cfg);
         self.cfg = undefined;
     }
@@ -128,7 +145,6 @@ pub const App = struct {
         const w = c.webview_create(0, null);
         if (w == null) return error.WebviewCreateFailed;
         self.w = w;
-        defer _ = c.webview_destroy(w);
 
         _ = c.webview_set_title(w, "modsync");
         _ = c.webview_set_size(w, 520, 640, c.WEBVIEW_HINT_NONE);
@@ -142,6 +158,28 @@ pub const App = struct {
 
         _ = c.webview_navigate(w, ui_url);
         _ = c.webview_run(w);
+
+        // The window is closed, but a detached refresh worker may still be
+        // running (downloads take seconds). Drain it before destroying the
+        // webview: the worker calls `webview_dispatch(w, ...)` and touches
+        // `cfg`, both of which die with the webview / `deinit`. The worker
+        // clears `refreshing` as its very last action (its topmost `defer`),
+        // so once the flag reads false nothing else will run. `std.Thread`
+        // has no `sleep` in 0.17 and an Io handle isn't available here, so
+        // the wait is a yield-loop.
+        while (true) {
+            self.mutex.lock();
+            const busy = self.refreshing.load(.acquire);
+            self.mutex.unlock();
+            if (!busy) break;
+            std.Thread.yield() catch {};
+        }
+        {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.stopped = true;
+        }
+        _ = c.webview_destroy(w);
     }
 
     // ------------------------------------------------------------------
@@ -312,6 +350,12 @@ pub const App = struct {
     /// in turn (per-repo errors become status strings, never abort the loop),
     /// push fresh state JSON to the UI after each repo, persist at the end.
     fn refreshWorker(self: *App) void {
+        // Drain-loop contract: `cbStartRefresh` already set `refreshing` true
+        // before spawning this thread (atomically, to guard double-spawn), and
+        // this topmost defer clears it as the very last statement on EVERY
+        // exit path — including the early returns below. `run`'s post-
+        // `webview_run` drain loop spins on this flag, so it can never
+        // destroy the webview while any code in this function is still live.
         defer self.refreshing.store(false, .release);
 
         // --- snapshot under the lock ---
@@ -365,6 +409,16 @@ pub const App = struct {
     /// Hand `json` (an already-built state blob) to the GUI thread, which
     /// evals `renderState(...)` in the page. Takes ownership of `json`.
     fn pushState(self: *App, json: []const u8) void {
+        // Never touch the webview handle after teardown: if the window has
+        // been closed and the webview destroyed, just drop the payload.
+        {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            if (self.stopped) {
+                self.allocator.free(json);
+                return;
+            }
+        }
         const js = std.fmt.allocPrintSentinel(self.allocator, "window.renderState && renderState({s});", .{json}, 0) catch {
             self.allocator.free(json);
             return;
@@ -620,6 +674,42 @@ test "buildStateJson: no-releases row plus null installedVersion serializes as n
     try std.testing.expect(std.mem.indexOf(u8, json, "\"no releases\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"installedVersion\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"installedJar\":null") != null);
+}
+
+test "buildStateJson: statuses pair by owner+name, not by index" {
+    var repos = [2]Repo{
+        .{ .owner = "cumsauce", .name = "gore", .installedVersion = "v0.1.2", .installedJar = "gore-0.1.2.jar" },
+        .{ .owner = "desocketed", .name = "surprise" },
+    };
+    const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
+    // Deliberately ordered DIFFERENTLY from cfg.repos (plus a stale entry for
+    // a repo that is no longer in the config) — simulates a mid-refresh
+    // add/remove shifting indices. Pairing must be by owner+name.
+    const statuses = [3]RepoStatus{
+        .{ .owner = "desocketed", .name = "surprise", .status = "no releases" },
+        .{ .owner = "ghost", .name = "removed", .status = "stale status" },
+        .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2" },
+    };
+
+    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
+    defer std.testing.allocator.free(json);
+
+    // Brief's four substrings, all in ONE JSON blob:
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"gore\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"v0.1.2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"surprise\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"no releases\"") != null);
+
+    // The stale status must NOT appear — cfg.repos drives the rows.
+    try std.testing.expect(std.mem.indexOf(u8, json, "stale status") == null);
+
+    // Rows come out in cfg.repos order, each carrying the status that
+    // matched ITS owner+name (not whatever happened to share an index):
+    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\"}";
+    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\"}";
+    const gore_at = std.mem.indexOf(u8, json, gore_row) orelse return error.TestUnexpectedResult;
+    const surprise_at = std.mem.indexOf(u8, json, surprise_row) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(gore_at < surprise_at);
 }
 
 test "buildStateJson: repo without a status row gets an empty status" {
