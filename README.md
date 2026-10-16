@@ -41,8 +41,8 @@ and linked in CI (MSVC toolchain) but has not been runtime-tested.
   (`{repo}-*.jar`) and leaves every other file in `mods/` untouched.
 - Already-up-to-date mods are skipped (same tag **and** the jar is present).
 - Seed repos: `cumsauce/gore`, `cumsauce/foley`, `cumsauce/earshot`,
-  `cumsauce/stalker`, `cumsauce/aorta`, `desocketed/yakvc` — but you can add or
-  remove any repo.
+  `cumsauce/stalker`, `cumsauce/aorta`, `desocketed/yakvc` — configurable via
+  `defaults.json` (see Config below), and you can add or remove any repo.
 - Prereleases count (foley/earshot/yakvc are prerelease-only), so "newest" means
   the first non-draft release on the `releases?per_page=100` list.
 
@@ -84,7 +84,25 @@ A JSON file, auto-created and updated:
 | Linux   | `~/.config/modsync/config.json` |
 | Windows | `%APPDATA%\modsync\config.json` |
 
-Optional: set a GitHub token in `githubToken` for higher API rate limits.
+### Changing the default (seed) repos — no rebuild needed
+
+Which repos a fresh install starts with lives in a **data file**, not the code:
+
+```
+<config-dir>/defaults.json      # e.g. ~/Library/Application Support/modsync/defaults.json
+```
+
+It's written on first run as a copy of the built-in list. Edit it any time, then
+either delete `config.json` (to re-seed on next start) or hit **Restore defaults**
+in the app to re-apply it to your current list. A bundled copy in the source
+(`src/defaults.json`) is the fallback when the user file is missing or malformed,
+so editing the file never requires recompiling.
+
+```json
+{ "repos": [ { "owner": "cumsauce", "name": "gore" } ] }
+```
+
+Optional: set a GitHub token in `config.json`'s `githubToken` for higher API rate limits.
 
 ## Layout
 
