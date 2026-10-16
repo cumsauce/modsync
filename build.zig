@@ -95,13 +95,10 @@ pub fn build(b: *std.Build) void {
             mod.linkSystemLibrary("shell32", .{});
             mod.linkSystemLibrary("shlwapi", .{});
             mod.linkSystemLibrary("version", .{});
-            // MSVC C++ runtime, needed because the prebuilt webview lib was
-            // compiled by cl.exe against MSVC's STL (Zig only links it).
-            if (webview_prebuilt_lib != null) {
-                mod.linkSystemLibrary("msvcprt", .{});
-                mod.linkSystemLibrary("vcruntime", .{});
-                mod.linkSystemLibrary("ucrt", .{});
-            }
+            // NOTE: do NOT explicitly link the CRT (ucrt/vcruntime/msvcprt) —
+            // Zig's msvc mode provides it via the detected libc installation.
+            // The prebuilt webview lib's C++ runtime symbols resolve against
+            // that same CRT.
         },
         else => {},
     }
