@@ -9,10 +9,19 @@ pub const Repo = struct {
     installedJar: ?[]const u8 = null,
 };
 
+pub const ProfileRef = struct {
+    kind: []const u8, // "prism" | "modrinth"
+    name: []const u8, // display label (folder name)
+    gameDir: []const u8, // absolute; equals minecraftDir when set via a pick
+};
+
 pub const Config = struct {
     minecraftDir: []const u8,
     githubToken: ?[]const u8 = null,
     repos: []Repo,
+    /// The launcher profile the user picked, for display. `minecraftDir` stays
+    /// the authoritative path; this records where it came from.
+    selectedProfile: ?ProfileRef = null,
 };
 
 /// Backing storage for `defaultRepos`. Returned as a mutable slice because the
@@ -152,6 +161,11 @@ pub fn save(cfg: *const Config) !void {
 pub fn freeConfig(allocator: Allocator, cfg: Config) void {
     allocator.free(cfg.minecraftDir);
     if (cfg.githubToken) |t| allocator.free(t);
+    if (cfg.selectedProfile) |p| {
+        allocator.free(p.kind);
+        allocator.free(p.name);
+        allocator.free(p.gameDir);
+    }
     for (cfg.repos) |r| freeRepo(allocator, r);
     allocator.free(cfg.repos);
 }
@@ -171,6 +185,21 @@ fn dupeConfig(allocator: Allocator, src: Config) !Config {
 
     const token = if (src.githubToken) |t| try allocator.dupe(u8, t) else null;
     errdefer if (token) |t| allocator.free(t);
+
+    const selected_profile: ?ProfileRef = if (src.selectedProfile) |sp| blk: {
+        const kind = try allocator.dupe(u8, sp.kind);
+        errdefer allocator.free(kind);
+        const name = try allocator.dupe(u8, sp.name);
+        errdefer allocator.free(name);
+        const game_dir = try allocator.dupe(u8, sp.gameDir);
+        errdefer allocator.free(game_dir);
+        break :blk .{ .kind = kind, .name = name, .gameDir = game_dir };
+    } else null;
+    errdefer if (selected_profile) |sp| {
+        allocator.free(sp.kind);
+        allocator.free(sp.name);
+        allocator.free(sp.gameDir);
+    };
 
     const repos = try allocator.alloc(Repo, src.repos.len);
     errdefer allocator.free(repos);
@@ -202,6 +231,7 @@ fn dupeConfig(allocator: Allocator, src: Config) !Config {
         .minecraftDir = minecraft_dir,
         .githubToken = token,
         .repos = repos,
+        .selectedProfile = selected_profile,
     };
 }
 
@@ -280,4 +310,60 @@ test "Config round-trips through saveTo/loadFrom as pretty JSON" {
 
     // Absent file → null, not an error (pinned behavior).
     try std.testing.expect((try loadFrom(std.testing.allocator, "/tmp/modsync-absent-does-not-exist.json")) == null);
+}
+
+test "selectedProfile round-trips through saveTo/loadFrom" {
+    const path = "/tmp/modsync-task2-profile-roundtrip.json";
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    const io = threaded.io();
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    const repos = try std.testing.allocator.alloc(Repo, 1);
+    defer std.testing.allocator.free(repos);
+    repos[0] = .{ .owner = "a", .name = "b" };
+    const cfg = Config{
+        .minecraftDir = "/tmp/mc",
+        .repos = repos,
+        .selectedProfile = .{
+            .kind = "prism",
+            .name = "A",
+            .gameDir = "/tmp/instances/A/minecraft",
+        },
+    };
+
+    try saveTo(path, &cfg);
+    const loaded = (try loadFrom(std.testing.allocator, path)) orelse return error.ExpectedConfigToExist;
+    defer freeConfig(std.testing.allocator, loaded);
+
+    const sp = loaded.selectedProfile.?;
+    try std.testing.expectEqualStrings("prism", sp.kind);
+    try std.testing.expectEqualStrings("A", sp.name);
+    try std.testing.expectEqualStrings("/tmp/instances/A/minecraft", sp.gameDir);
+}
+
+test "a pre-v0.2 config without selectedProfile loads with it null" {
+    const path = "/tmp/modsync-task2-legacy-config.json";
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    const io = threaded.io();
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    // A v0.1.0-shaped config file: no selectedProfile key at all.
+    const legacy_json =
+        \\{
+        \\  "minecraftDir": "/tmp/mc",
+        \\  "repos": [
+        \\    { "owner": "cumsauce", "name": "gore" }
+        \\  ]
+        \\}
+    ;
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = legacy_json });
+
+    const loaded = (try loadFrom(std.testing.allocator, path)) orelse return error.ExpectedConfigToExist;
+    defer freeConfig(std.testing.allocator, loaded);
+
+    try std.testing.expect(loaded.selectedProfile == null);
+    try std.testing.expectEqualStrings("/tmp/mc", loaded.minecraftDir);
+    try std.testing.expectEqual(@as(usize, 1), loaded.repos.len);
 }
