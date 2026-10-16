@@ -6,9 +6,46 @@ const c = @import("webview_api");
 const config_mod = @import("config.zig");
 const net = @import("net.zig");
 const install = @import("install.zig");
+const launcher = @import("launcher.zig");
 
 const Config = config_mod.Config;
 const Repo = config_mod.Repo;
+
+// ============================================================================
+// Pure launchers-JSON builder (unit-testable offline)
+// ============================================================================
+
+/// Serializable shape for one discovered launcher profile.
+const ProfileJson = struct {
+    kind: []const u8, // "prism" | "modrinth"
+    name: []const u8,
+    gameDir: []const u8,
+    root: []const u8,
+};
+
+/// Serializable shape of the whole listLaunchers() response.
+const LaunchersJson = struct {
+    profiles: []ProfileJson,
+    errors: [][]const u8,
+};
+
+/// Build the listLaunchers() response JSON from a Discovery. Caller owns.
+pub fn buildLaunchersJson(allocator: Allocator, d: *const launcher.Discovery) ![]u8 {
+    const out = try allocator.alloc(ProfileJson, d.profiles.len);
+    defer allocator.free(out);
+    for (d.profiles, out) |p, *o| {
+        o.* = .{
+            .kind = @tagName(p.kind),
+            .name = p.name,
+            .gameDir = p.gameDir,
+            .root = p.root,
+        };
+    }
+    return try std.json.Stringify.valueAlloc(allocator, LaunchersJson{
+        .profiles = out,
+        .errors = d.errors,
+    }, .{});
+}
 
 // ============================================================================
 // Pure state-JSON builder (unit-testable offline)
@@ -157,6 +194,8 @@ pub const App = struct {
         _ = c.webview_bind(w, "addRepo", cbAddRepo, app_arg);
         _ = c.webview_bind(w, "removeRepo", cbRemoveRepo, app_arg);
         _ = c.webview_bind(w, "startRefresh", cbStartRefresh, app_arg);
+        _ = c.webview_bind(w, "listLaunchers", cbListLaunchers, app_arg);
+        _ = c.webview_bind(w, "selectProfile", cbSelectProfile, app_arg);
 
         _ = c.webview_run(w);
 
@@ -513,6 +552,88 @@ fn cbSetMinecraftDir(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) call
     }
 }
 
+/// listLaunchers() → discovery JSON: {"profiles":[...],"errors":[...]}.
+fn cbListLaunchers(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    _ = req;
+    const app = appFromArg(arg);
+
+    const d = launcher.discoverAll(app.allocator) catch {
+        respond(app, id, "{\"profiles\":[],\"errors\":[\"discovery failed\"]}");
+        return;
+    };
+    defer launcher.freeDiscovery(app.allocator, d);
+
+    const json = buildLaunchersJson(app.allocator, &d) catch {
+        respond(app, id, "{\"profiles\":[],\"errors\":[\"discovery failed\"]}");
+        return;
+    };
+    defer app.allocator.free(json);
+    respond(app, id, json);
+}
+
+/// selectProfile(gameDir) → "true"/"false"; sets minecraftDir + selectedProfile
+/// if (and only if) the gameDir matches a discovered profile, then persists.
+fn cbSelectProfile(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    const app = appFromArg(arg);
+    var game_dir: []const u8 = undefined;
+    if (!firstStringArg(app, req, &game_dir)) {
+        respond(app, id, "false");
+        return;
+    }
+
+    // Discover OUTSIDE the lock (filesystem scan), then decide under the lock.
+    const d = launcher.discoverAll(app.allocator) catch {
+        app.allocator.free(game_dir);
+        respond(app, id, "false");
+        return;
+    };
+    defer launcher.freeDiscovery(app.allocator, d);
+
+    var matched: ?launcher.Profile = null;
+    for (d.profiles) |p| {
+        if (std.mem.eql(u8, p.gameDir, game_dir)) {
+            matched = p;
+            break;
+        }
+    }
+    const p = matched orelse {
+        app.allocator.free(game_dir); // not an offered profile — reject
+        respond(app, id, "false");
+        return;
+    };
+
+    app.mutex.lock();
+    defer app.mutex.unlock();
+
+    const kind = app.allocator.dupe(u8, @tagName(p.kind)) catch {
+        app.allocator.free(game_dir);
+        respond(app, id, "false");
+        return;
+    };
+    const name = app.allocator.dupe(u8, p.name) catch {
+        app.allocator.free(kind);
+        app.allocator.free(game_dir);
+        respond(app, id, "false");
+        return;
+    };
+
+    const old = app.cfg.minecraftDir;
+    app.cfg.minecraftDir = game_dir; // ownership transferred to the config
+    app.allocator.free(old);
+    if (app.cfg.selectedProfile) |old_sp| {
+        app.allocator.free(old_sp.kind);
+        app.allocator.free(old_sp.name);
+        app.allocator.free(old_sp.gameDir);
+    }
+    app.cfg.selectedProfile = .{ .kind = kind, .name = name, .gameDir = game_dir };
+
+    if (config_mod.save(&app.cfg)) {
+        respond(app, id, "true");
+    } else |_| {
+        respond(app, id, "false");
+    }
+}
+
 /// addRepo("owner/name") → "true"/"false"; appends + persists.
 fn cbAddRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
     const app = appFromArg(arg);
@@ -736,4 +857,28 @@ test "cloneConfig deep-copies the global seed so mutation never touches it" {
     try std.testing.expect(cfg.repos.ptr != original.ptr);
     try std.testing.expect(cfg.repos[0].owner.ptr != original[0].owner.ptr);
     try std.testing.expect(cfg.repos[4].name.ptr != original[4].name.ptr);
+}
+
+test "buildLaunchersJson includes profiles and errors" {
+    var profiles = [_]launcher.Profile{
+        .{ .kind = .prism, .name = "A", .gameDir = "/m/A", .root = "/r1" },
+    };
+    var errs = [_][]const u8{"denied"};
+    const d = launcher.Discovery{ .profiles = &profiles, .errors = &errs };
+    const json = try buildLaunchersJson(std.testing.allocator, &d);
+    defer std.testing.allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"prism\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"A\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "/m/A") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "denied") != null);
+}
+
+test "buildLaunchersJson with empty discovery emits empty arrays" {
+    const d = launcher.Discovery{ .profiles = &.{}, .errors = &.{} };
+    const json = try buildLaunchersJson(std.testing.allocator, &d);
+    defer std.testing.allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"profiles\":[]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"errors\":[]") != null);
 }
