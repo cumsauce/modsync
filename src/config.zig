@@ -210,7 +210,7 @@ test "configPath is absolute and ends in modsync/config.json" {
     defer std.testing.allocator.free(path);
 
     try std.testing.expect(std.mem.startsWith(u8, path, "/"));
-    try std.testing.expect(std.mem.indexOf(u8, path, "modsync/config.json") != null);
+    try std.testing.expect(std.mem.endsWith(u8, path, "modsync/config.json"));
 
     // Force analysis of the real-path wrappers without touching $HOME.
     _ = &load;
@@ -246,6 +246,8 @@ test "Config round-trips through saveTo/loadFrom as pretty JSON" {
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"/tmp/mc\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"v0.1.2\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"gore-0.1.2.jar\"") != null);
+    // Pretty serialization → newline + 2-space indent (indent_2, not minified).
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\n  ") != null);
 
     const loaded = (try loadFrom(std.testing.allocator, path)) orelse return error.ExpectedConfigToExist;
     defer freeConfig(std.testing.allocator, loaded);
@@ -257,4 +259,7 @@ test "Config round-trips through saveTo/loadFrom as pretty JSON" {
     try std.testing.expectEqualStrings("b", loaded.repos[0].name);
     try std.testing.expectEqualStrings("v0.1.2", loaded.repos[0].installedVersion.?);
     try std.testing.expectEqualStrings("gore-0.1.2.jar", loaded.repos[0].installedJar.?);
+
+    // Absent file → null, not an error (pinned behavior).
+    try std.testing.expect((try loadFrom(std.testing.allocator, "/tmp/modsync-absent-does-not-exist.json")) == null);
 }
