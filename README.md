@@ -63,7 +63,12 @@ Then launch it directly:
 
 ## Using the app
 
-- **Minecraft folder** — type the path and press **Save**.
+- **Detected launchers** — modsync finds Prism Launcher and Modrinth App installs
+  automatically (macOS, Linux, Windows) and lists their instances/profiles. Hit
+  **Use** on one to make it the managed game directory. Only `<profile>/mods/`
+  is ever touched; launcher metadata is never written.
+- **Minecraft folder** — type the path and press **Save** (manual alternative to
+  picking a profile).
 - **Refresh all** — fetches each tracked repo's newest release and installs it.
   Each row shows its status (installed tag / up to date / no releases / error).
 - **Tracked mods** — add a repo as `owner/name`, or **Remove** one.
