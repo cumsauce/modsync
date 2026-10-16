@@ -35,6 +35,49 @@ pub fn fetchLatest(
     repo: []const u8,
     token: ?[]const u8,
 ) FetchError!?FetchedMod {
+    const json = try fetchReleasesJson(allocator, client, owner, repo, token);
+    defer allocator.free(json);
+
+    return chooseFromReleases(allocator, json, repo);
+}
+
+/// A selected jar asset including its `browser_download_url`.
+pub const FetchedAsset = struct {
+    tag: []const u8,
+    name: []const u8,
+    size: u64,
+    /// `browser_download_url` of the selected asset — pass straight to `downloadJar`.
+    url: []const u8,
+};
+
+/// Like `fetchLatest`, but also returns the selected asset's
+/// `browser_download_url` so the caller can hand it straight to `downloadJar`.
+/// Additive companion to `fetchLatest` (which does not expose the URL);
+/// ownership rules are the same — caller frees `tag`, `name`, and `url` with
+/// the allocator. Returns null only via error.NoReleases/NoJarAsset, matching
+/// `fetchLatest`.
+pub fn fetchLatestAsset(
+    allocator: std.mem.Allocator,
+    client: *std.http.Client,
+    owner: []const u8,
+    repo: []const u8,
+    token: ?[]const u8,
+) FetchError!?FetchedAsset {
+    const json = try fetchReleasesJson(allocator, client, owner, repo, token);
+    defer allocator.free(json);
+
+    return chooseAssetFromReleases(allocator, json, repo);
+}
+
+/// GET the releases list of `{owner}/{repo}` and return the raw response body
+/// (caller frees). Shared by `fetchLatest` and `fetchLatestAsset`.
+fn fetchReleasesJson(
+    allocator: std.mem.Allocator,
+    client: *std.http.Client,
+    owner: []const u8,
+    repo: []const u8,
+    token: ?[]const u8,
+) FetchError![]u8 {
     const url = try std.fmt.allocPrint(
         allocator,
         "https://api.github.com/repos/{s}/{s}/releases?per_page=100",
@@ -70,7 +113,7 @@ pub fn fetchLatest(
     });
     if (result.status.class() != .success) return error.Http;
 
-    return chooseFromReleases(allocator, body.writer.buffered(), repo);
+    return try allocator.dupe(u8, body.writer.buffered());
 }
 
 /// GET `url` (following up to 5 redirects — GitHub asset URLs 302 to a CDN)
@@ -133,6 +176,28 @@ fn chooseFromReleases(allocator: std.mem.Allocator, json: []const u8, repo: []co
     return .{ .tag = tag, .jarName = jar_name, .jarSize = asset.size };
 }
 
+/// Pure selection for `fetchLatestAsset`: parse → select release → select jar
+/// → dupes (including the asset's `browser_download_url`). Caller-owned output.
+fn chooseAssetFromReleases(allocator: std.mem.Allocator, json: []const u8, repo: []const u8) FetchError!?FetchedAsset {
+    const releases = github.parseReleases(allocator, json) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidPayload,
+    };
+    defer github.freeReleases(allocator, releases);
+
+    const rel = github.selectRelease(releases) orelse return error.NoReleases;
+    const asset = (try github.selectJarAsset(allocator, rel.assets, repo)) orelse return error.NoJarAsset;
+
+    const tag = try allocator.dupe(u8, rel.tag);
+    errdefer allocator.free(tag);
+    const name = try allocator.dupe(u8, asset.name);
+    errdefer allocator.free(name);
+    const url = try allocator.dupe(u8, asset.browserDownloadUrl);
+    errdefer allocator.free(url);
+
+    return .{ .tag = tag, .name = name, .size = asset.size, .url = url };
+}
+
 // ============================================================================
 // Offline tests — exercise the pure composition only (no network).
 // ============================================================================
@@ -168,5 +233,24 @@ test "chooseFromReleases: empty releases list → error.NoReleases" {
     try std.testing.expectError(
         error.NoReleases,
         chooseFromReleases(std.testing.allocator, "[]", "gore"),
+    );
+}
+
+test "chooseAssetFromReleases: gore fixture yields tag + name + size + url" {
+    const got = (try chooseAssetFromReleases(std.testing.allocator, gore_fixture, "gore")).?;
+    defer std.testing.allocator.free(got.tag);
+    defer std.testing.allocator.free(got.name);
+    defer std.testing.allocator.free(got.url);
+
+    try std.testing.expectEqualStrings("v0.1.2", got.tag);
+    try std.testing.expectEqualStrings("gore-0.1.2.jar", got.name);
+    try std.testing.expectEqual(@as(u64, 12345), got.size);
+    try std.testing.expectEqualStrings("https://example/gore-0.1.2.jar", got.url);
+}
+
+test "chooseAssetFromReleases: release without a qualifying jar → error.NoJarAsset" {
+    try std.testing.expectError(
+        error.NoJarAsset,
+        chooseAssetFromReleases(std.testing.allocator, nojar_fixture, "gore"),
     );
 }

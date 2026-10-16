@@ -1,16 +1,25 @@
 const std = @import("std");
 
-const c = @import("webview_api");
+const config = @import("config.zig");
+const App = @import("app.zig").App;
 
 pub fn main() !void {
-    const w = c.webview_create(0, null);
-    if (w == null) return error.WebviewCreateFailed;
+    const alloc = std.heap.smp_allocator;
 
-    _ = c.webview_set_title(w, "modsync");
-    _ = c.webview_set_size(w, 520, 640, c.WEBVIEW_HINT_NONE);
-    _ = c.webview_navigate(w, "data:text/html,<h1>modsync</h1>");
-    _ = c.webview_run(w);
-    _ = c.webview_destroy(w);
+    // Load the saved config, or fall back to the platform defaults. The
+    // default repos slice aliases a global seed — App.init deep-clones, so it
+    // is never mutated or freed here (and a loaded copy is freed below).
+    const loaded: ?config.Config = try config.load(alloc);
+    defer if (loaded) |cfg| config.freeConfig(alloc, cfg);
+    const cfg = loaded orelse config.Config{
+        .minecraftDir = config.defaultMinecraftDir(),
+        .githubToken = null,
+        .repos = config.defaultRepos(),
+    };
+
+    var app = try App.init(alloc, cfg);
+    defer app.deinit();
+    try app.run();
 }
 
 test {
@@ -18,4 +27,5 @@ test {
     _ = @import("config.zig");
     _ = @import("github.zig");
     _ = @import("install.zig");
+    _ = @import("app.zig");
 }
