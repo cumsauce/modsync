@@ -73,11 +73,27 @@ button.danger { color: var(--err); }
 .status.warn { color: var(--warn); }
 .status.err { color: var(--err); }
 .empty { color: var(--muted); padding: 10px 0; font-size: 13px; }
+.launcher-kind {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); padding-top: 10px; border-top: 0;
+}
+.launcher-label { flex: 1 1 auto; min-width: 90px; overflow-wrap: anywhere; }
+.launcher-label.selected { color: var(--ok); font-weight: 600; }
 </style>
 </head>
 <body>
 <main>
   <h1>modsync</h1>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between; margin-bottom:4px;">
+      <h2>Detected launchers</h2>
+      <button id="rescan">Rescan</button>
+    </div>
+    <ul id="launchers" class="list"></ul>
+    <div id="launchers-empty" class="empty" hidden>No launchers found — enter a path below.</div>
+    <div id="launchers-errors" class="hint"></div>
+  </section>
 
   <section class="card">
     <h2>Minecraft folder</h2>
@@ -180,6 +196,7 @@ button.danger { color: var(--err); }
     if (!state || typeof state !== "object") { renderList([]); return; }
     // Don't stomp the folder input while the user is typing in it.
     if (document.activeElement !== folder) folder.value = state.minecraftDir || "";
+    currentGameDir = state.minecraftDir || "";
     renderList(Array.isArray(state.repos) ? state.repos : []);
     setRefreshing(false);
   };
@@ -192,6 +209,67 @@ button.danger { color: var(--err); }
     if (typeof res === "string") { try { res = JSON.parse(res); } catch (e) { res = null; } }
     window.__applyState(res);  // null → empty state
   }
+
+  // ---- Detected launchers -------------------------------------------------
+
+  const launchersList = $("launchers");
+  const launchersEmpty = $("launchers-empty");
+  const launchersErrors = $("launchers-errors");
+  let currentGameDir = "";
+
+  function renderLaunchers(payload) {
+    launchersList.textContent = "";
+    const profiles = (payload && Array.isArray(payload.profiles)) ? payload.profiles : [];
+    const errors = (payload && Array.isArray(payload.errors)) ? payload.errors : [];
+
+    if (profiles.length === 0) {
+      launchersEmpty.hidden = false;
+    } else {
+      launchersEmpty.hidden = true;
+      let lastKind = null;
+      for (const p of profiles) {
+        if (p.kind !== lastKind) {
+          lastKind = p.kind;
+          const h = document.createElement("li");
+          h.className = "launcher-kind";
+          h.textContent = p.kind === "prism" ? "Prism Launcher" : "Modrinth App";
+          launchersList.appendChild(h);
+        }
+        const li = document.createElement("li");
+        li.className = "launcher-row";
+
+        const label = document.createElement("span");
+        label.className = "launcher-label" + (p.gameDir === currentGameDir ? " selected" : "");
+        label.textContent = p.name + (p.gameDir === currentGameDir ? "  ✓" : "");
+        label.title = p.gameDir;
+
+        const use = document.createElement("button");
+        use.textContent = "Use";
+        use.addEventListener("click", async () => {
+          let ok = false;
+          try { ok = asBool(await call("selectProfile", p.gameDir)); } catch (e) {}
+          if (ok) await load();  // re-fetch state (updates folder + selected row)
+        });
+
+        li.appendChild(label);
+        li.appendChild(use);
+        launchersList.appendChild(li);
+      }
+    }
+
+    launchersErrors.textContent = errors.length
+      ? "Couldn't read: " + errors.join(", ")
+      : "";
+  }
+
+  async function loadLaunchers() {
+    let payload = null;
+    try { payload = await call("listLaunchers"); } catch (e) {}
+    if (typeof payload === "string") { try { payload = JSON.parse(payload); } catch (e) { payload = null; } }
+    renderLaunchers(payload);
+  }
+
+  $("rescan").addEventListener("click", () => loadLaunchers());
 
   // Flush a state push that arrived before this script ran.
   if (window.__pendingState) {
@@ -240,6 +318,7 @@ button.danger { color: var(--err); }
   newRepo.addEventListener("keydown", (e) => { if (e.key === "Enter") $("add").click(); });
 
   await load();
+  await loadLaunchers();
 })();
 </script>
 </body>
