@@ -9,10 +9,15 @@ pub fn build(b: *std.Build) void {
     // linking a prebuilt lib, C++ is already compiled, so Zig needs no C++ stdlib.
     const webview_prebuilt_lib = b.option([]const u8, "webview-prebuilt-lib", "Path to a prebuilt webview static lib (Windows/MSVC)");
 
+    // Strip symbols from release builds (default on unless -Dstrip=false). This
+    // is a pure size win with no behavioural change; debug builds keep symbols.
+    const strip = b.option(bool, "strip", "Strip debug symbols (default: true for release builds)") orelse (optimize != .debug);
+
     const mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
         // Zig 0.17: linkLibC()/linkLibCpp() were removed from Build.Module;
         // libc/libc++ are now module creation options (std/Build/Module.zig).
         .link_libc = true,
