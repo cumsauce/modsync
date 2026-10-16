@@ -84,8 +84,9 @@ fn appendJsonString(allocator: Allocator, out: *std.ArrayList(u8), s: []const u8
 // App: JS↔Zig bridge + background refresh worker
 // ============================================================================
 
-/// Placeholder document until Task 7 ships the real embedded UI.
-const ui_url = "data:text/html,<h1>modsync</h1>";
+/// The embedded UI document; `@embedFile("ui.html")` resolves to `src/ui.html`
+/// (relative to the module root, `src/main.zig`).
+const ui_html = @embedFile("ui.html");
 
 /// Blocking mutex over an atomic flag (std.Thread.Mutex no longer exists in
 /// Zig 0.17; std.Io.Mutex needs an Io handle, which the C bind callbacks on
@@ -138,9 +139,9 @@ pub const App = struct {
         self.cfg = undefined;
     }
 
-    /// Create the webview, bind the JS callables (passing `*App` as the C
-    /// callback arg), navigate to the UI, and run the event loop until the
-    /// window closes.
+    /// Create the webview, load the embedded UI document, bind the JS
+    /// callables (passing `*App` as the C callback arg), and run the event
+    /// loop until the window closes.
     pub fn run(self: *App) !void {
         const w = c.webview_create(0, null);
         if (w == null) return error.WebviewCreateFailed;
@@ -148,6 +149,7 @@ pub const App = struct {
 
         _ = c.webview_set_title(w, "modsync");
         _ = c.webview_set_size(w, 520, 640, c.WEBVIEW_HINT_NONE);
+        _ = c.webview_set_html(w, ui_html);
 
         const app_arg: ?*anyopaque = self;
         _ = c.webview_bind(w, "getConfig", cbGetConfig, app_arg);
@@ -156,7 +158,6 @@ pub const App = struct {
         _ = c.webview_bind(w, "removeRepo", cbRemoveRepo, app_arg);
         _ = c.webview_bind(w, "startRefresh", cbStartRefresh, app_arg);
 
-        _ = c.webview_navigate(w, ui_url);
         _ = c.webview_run(w);
 
         // The window is closed, but a detached refresh worker may still be
