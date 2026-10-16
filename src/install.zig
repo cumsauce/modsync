@@ -83,7 +83,9 @@ pub fn staleJarNames(allocator: Allocator, modsDirPath: []const u8, repoName: []
         if (name[repoName.len] != '-') continue;
         if (!std.mem.endsWith(u8, name, ".jar")) continue;
         if (std.mem.eql(u8, name, keepJar)) continue;
-        try names.append(allocator, try allocator.dupe(u8, name));
+        const copy = try allocator.dupe(u8, name);
+        errdefer allocator.free(copy);
+        try names.append(allocator, copy);
     }
     return try names.toOwnedSlice(allocator);
 }
@@ -101,6 +103,8 @@ pub fn placeJar(modsDirPath: []const u8, tmpPath: []const u8, jarName: []const u
     std.Io.Dir.renameAbsolute(tmpPath, dest, io) catch {
         const bytes = try std.Io.Dir.cwd().readFileAlloc(io, tmpPath, std.heap.page_allocator, .unlimited);
         defer std.heap.page_allocator.free(bytes);
+        // If the fallback write fails, don't leave a truncated jar in mods/.
+        errdefer std.Io.Dir.deleteFileAbsolute(io, dest) catch {};
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dest, .data = bytes });
         try std.Io.Dir.deleteFileAbsolute(io, tmpPath);
     };
@@ -157,7 +161,7 @@ test "staleJarNames returns exactly the older {repoName}- jars" {
     const dir = try modsDir(std.testing.allocator, base);
     defer std.testing.allocator.free(dir);
 
-    const files = [_][]const u8{ "gore-0.1.1.jar", "gore-0.1.2.jar", "unrelated.jar", "notes.txt" };
+    const files = [_][]const u8{ "gore-0.1.1.jar", "gore-0.1.2.jar", "gore-0.1.0.jar.sha256", "unrelated.jar", "notes.txt" };
     for (files) |f| {
         const p = try std.fs.path.join(std.testing.allocator, &.{ dir, f });
         defer std.testing.allocator.free(p);
@@ -170,8 +174,10 @@ test "staleJarNames returns exactly the older {repoName}- jars" {
         std.testing.allocator.free(stale);
     }
 
-    // Exactly ["gore-0.1.1.jar"]: the kept jar, unrelated.jar and notes.txt
-    // must never be returned.
+    // Exactly ["gore-0.1.1.jar"]: the kept jar, unrelated.jar, notes.txt and
+    // the repo-prefixed checksum sidecar gore-0.1.0.jar.sha256 (which starts
+    // with "gore-" but must be excluded by the .jar-suffix check) must never
+    // be returned.
     try std.testing.expectEqual(@as(usize, 1), stale.len);
     try std.testing.expectEqualStrings("gore-0.1.1.jar", stale[0]);
 }
