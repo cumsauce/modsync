@@ -1,0 +1,211 @@
+const std = @import("std");
+const linux = @import("src/linux.zig");
+const windows = @import("src/windows.zig");
+const macos = @import("src/macos.zig");
+const ios = @import("src/ios.zig");
+const android = @import("src/android.zig");
+const build_zon = @import("build.zig.zon");
+
+const assert = std.debug.assert;
+
+pub const sources = @import("src/sdl.zon");
+
+pub const flags = &.{
+    "-fno-strict-aliasing",
+    "-fvisibility=hidden",
+    "-DUSING_GENERATED_CONFIG_H",
+};
+
+pub const SystemPaths = struct {
+    include: ?std.Build.LazyPath,
+    framework: ?std.Build.LazyPath,
+    library: ?std.Build.LazyPath,
+
+    pub fn print_missing_system_path_option(path: ?std.Build.LazyPath, comptime flag: []const u8, comptime platform: []const u8) std.Build.LazyPath {
+        return path orelse {
+            std.log.err("'-D" ++ flag ++ "' is required when building SDL for " ++ platform, .{});
+            std.process.exit(1);
+        };
+    }
+};
+
+pub fn build(b: *std.Build) !void {
+    // Get the upstream source and build options
+    const upstream = b.dependency("sdl", .{});
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const default_target_config = b.option(
+        bool,
+        "default_target_config",
+        \\provides a default `SDL_build_config.h` and dependencies for the current target, defaults
+        \\to true
+        ,
+    ) orelse true;
+
+    const linkage = b.option(
+        std.builtin.LinkMode,
+        "linkage",
+        \\whether to build a static or dynamic library, defaults to static
+        ,
+    ) orelse .static;
+
+    // Cross-compiling to a target whose SDK isn't bundled with Zig (iOS, Android) needs the
+    // SDK's headers/frameworks/libs passed in explicitly. Scoped to the SDL library only, unlike
+    // `--sysroot` this does not re-roots paths across the whole build graph.
+    const system_paths: SystemPaths = .{
+        .include = b.option(std.Build.LazyPath, "include_path", "SDK include dir, e.g. $(xcrun --sdk iphoneos --show-sdk-path)/usr/include or <ndk sysroot>/usr/include"),
+        .framework = b.option(std.Build.LazyPath, "framework_path", "SDK framework dir, e.g. $(xcrun --sdk iphoneos --show-sdk-path)/System/Library/Frameworks"),
+        .library = b.option(std.Build.LazyPath, "library_path", "SDK library dir, e.g. $(xcrun --sdk iphoneos --show-sdk-path)/usr/lib"),
+    };
+
+    // Get the SO version. This is the same as the SDL version, but the major version is elided
+    // since it's baked into the name. This mirrors the official build process.
+    var sdl_so_version = comptime std.SemanticVersion.parse(build_zon.dependencies.sdl.version) catch unreachable;
+    assert(sdl_so_version.major == 3);
+    sdl_so_version.major = 0;
+
+    // Create the library
+    const lib = b.addLibrary(.{
+        .name = "SDL3",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+        .linkage = linkage,
+        .version = sdl_so_version,
+    });
+    switch (linkage) {
+        .dynamic => {
+            lib.root_module.addCMacro("DLL_EXPORT", "1");
+            lib.setVersionScript(upstream.path("src/dynapi/SDL_dynapi.sym"));
+        },
+        .static => lib.root_module.addCMacro("SDL_STATIC_LIB", "1"),
+    }
+    lib.root_module.addCMacro("SDL_VENDOR_INFO", std.fmt.comptimePrint("\"{s} {s}\"", .{
+        "https://github.com/allyourcodebase/SDL",
+        build_zon.version,
+    }));
+    lib.installHeadersDirectory(upstream.path("include/SDL3"), "SDL3", .{});
+    b.installArtifact(lib);
+
+    // Set the include path
+    lib.root_module.addIncludePath(upstream.path("include"));
+    lib.root_module.addIncludePath(upstream.path("src"));
+    lib.root_module.addIncludePath(upstream.path("src/video/khronos"));
+
+    // Compile the generic sources
+    lib.root_module.addCSourceFiles(.{
+        .files = &sources.generic,
+        .root = upstream.path("src"),
+        .flags = flags,
+    });
+
+    if (default_target_config) {
+        const build_config_h = b.addConfigHeader(.{
+            .style = .{ .cmake = upstream.path("include/build_config/SDL_build_config.h.cmake") },
+            .include_path = "SDL_build_config.h",
+        }, .{
+            // Generic audio drivers
+            .SDL_AUDIO_DRIVER_DUMMY = true,
+            .SDL_AUDIO_DRIVER_DISK = true,
+
+            // Generic video drivers
+            .SDL_VIDEO_DRIVER_DUMMY = true,
+            .SDL_VIDEO_DRIVER_OFFSCREEN = true,
+
+            // Set the assert level, this logic mirrors the default SDL options with release
+            // safe added.
+            // https://wiki.libsdl.org/SDL3/SDL_ASSERT_LEVEL
+            .SDL_DEFAULT_ASSERT_LEVEL_CONFIGURED = true,
+            .SDL_DEFAULT_ASSERT_LEVEL = switch (optimize) {
+                .Debug, .ReleaseSafe => @as(i64, 2),
+                .ReleaseSmall, .ReleaseFast => @as(i64, 1),
+            },
+        });
+        lib.root_module.addConfigHeader(build_config_h);
+
+        // Configure the build for the target platform
+        switch (target.result.os.tag) {
+            .linux => if (target.result.abi.isAndroid())
+                android.build(b, target.result, lib, build_config_h, system_paths)
+            else
+                linux.build(b, target.result, lib, build_config_h),
+            .windows => windows.build(b, target.result, lib, build_config_h),
+            .macos => macos.build(b, target.result, lib, build_config_h),
+            .ios => ios.build(b, target.result, lib, build_config_h, system_paths),
+            else => @panic("target has no default config"),
+        }
+    }
+
+    // Add the Wayland scanner step
+    linux.addWaylandScannerStep(b);
+
+    // Translate the SDL headers and export them as a Zig module
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/sdl.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    translate_c.defineCMacro("USING_GENERATED_CONFIG_H", "1");
+    translate_c.addIncludePath(upstream.path("include"));
+    translate_c.addIncludePath(upstream.path("src/video/khronos"));
+    const module = translate_c.addModule("sdl3");
+    module.linkLibrary(lib);
+
+    // Add the example
+    const example = b.addExecutable(.{
+        .name = "example",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/example.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    example.root_module.addImport("sdl3", module);
+
+    const build_example_step = b.step("example", "Build the example app");
+    build_example_step.dependOn(&example.step);
+
+    const run_example = b.addRunArtifact(example);
+    const run_step = b.step("run-example", "Run the example app");
+    run_step.dependOn(&run_example.step);
+}
+
+/// Prefetches a list of dependencies, where each dependency has a name field and an args field. If
+/// any dependencies are not yet fetched, returns `error.LazyDependencyNeeded`. Saves us from
+/// repeatedly earlying out every time a new lazy dependency is needed.
+pub fn prefetch(b: *std.Build, comptime deps: anytype) error{LazyDependencyNeeded}!void {
+    var lazy_deps_needed = false;
+    inline for (deps) |dep| {
+        if (!b.systemIntegrationOption(dep.name, .{})) {
+            if (b.lazyDependency(dep.name, dep.args) == null) {
+                lazy_deps_needed = true;
+            }
+        }
+    }
+    if (lazy_deps_needed) {
+        return error.LazyDependencyNeeded;
+    }
+}
+
+/// Similar to `std.Build.lazyDependency`, but returns `null` if provided by the system with
+/// `-fsys`, and otherwise assserts that the dependency was already prefetched (e.g. with
+/// `prefetch`.)
+pub fn lazyDependency(b: *std.Build, name: []const u8) ?*std.Build.Dependency {
+    if (b.systemIntegrationOption(name, .{})) return null;
+    return b.lazyDependency(name, .{}) orelse std.debug.panic("{s} not prefetched", .{name});
+}
+
+/// Adds an include path via `lazyDependency`, unless provided via `-fsys`.
+pub fn addDepIncludePath(
+    b: *std.Build,
+    lib: *std.Build.Step.Compile,
+    name: []const u8,
+    sub_path: []const u8,
+) void {
+    if (lazyDependency(b, name)) |dep| {
+        lib.root_module.addIncludePath(dep.path(sub_path));
+    }
+}

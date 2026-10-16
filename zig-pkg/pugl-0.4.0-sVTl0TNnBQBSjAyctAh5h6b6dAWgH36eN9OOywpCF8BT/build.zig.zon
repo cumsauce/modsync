@@ -1,0 +1,12 @@
+.{
+    .name = .pugl,
+    .version = "0.4.0",
+    .fingerprint = 0x76f90528d1e554b1,
+    .paths = .{
+        "src",
+        "include",
+        "subprojects/puglutil/include",
+        "COPYING",
+        "build.zig.zon",
+    },
+}

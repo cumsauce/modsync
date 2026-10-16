@@ -1,41 +1,31 @@
 const std = @import("std");
+const dvui = @import("dvui");
 
-const config = @import("config.zig");
-const App = @import("app.zig").App;
+pub const dvui_app: dvui.App = .{
+    .config = .{
+        .options = .{
+            .size = .{ .w = 520.0, .h = 640.0 },
+            .min_size = .{ .w = 320.0, .h = 400.0 },
+            .title = "modsync",
+        },
+    },
+    .frameFn = appFrame,
+};
 
-pub fn main() !void {
-    const alloc = std.heap.smp_allocator;
+pub const main = dvui.App.main;
+pub const panic = dvui.App.panic;
+pub const std_options: std.Options = .{ .logFn = dvui.App.logFn };
 
-    // Make the seed list discoverable/editable on first run.
-    config.writeDefaultsIfAbsent();
+fn appFrame() !dvui.App.Result {
+    var scroll = dvui.scrollArea(@src(), .{}, .{ .expand = .both, .style = .window });
+    defer scroll.deinit();
 
-    // Load the saved config, or build one from the seed repos
-    // (`<config-dir>/defaults.json`, else the embedded list).
-    const loaded: ?config.Config = try config.load(alloc);
-    defer if (loaded) |cfg| config.freeConfig(alloc, cfg);
+    dvui.label(@src(), "modsync (dvui spike)", .{}, .{ .font = .theme(.title) });
+    _ = dvui.separator(@src(), .{ .expand = .horizontal });
 
-    var cfg = loaded orelse config.Config{
-        .minecraftDir = config.defaultMinecraftDir(),
-        .githubToken = null,
-        .repos = try config.defaultRepos(alloc),
-    };
-    if (loaded == null) {
-        // Seed repos are allocator-owned; App.init deep-clones them, and the
-        // clone is what gets freed — so release the originals here.
-        config.freeRepos(alloc, cfg.repos);
-        cfg.repos = &[_]config.Repo{};
+    if (dvui.button(@src(), "Click me", .{}, .{})) {
+        std.debug.print("clicked\n", .{});
     }
 
-    var app = try App.init(alloc, cfg);
-    defer app.deinit();
-    try app.run();
-}
-
-test {
-    _ = @import("net.zig");
-    _ = @import("config.zig");
-    _ = @import("github.zig");
-    _ = @import("install.zig");
-    _ = @import("app.zig");
-    _ = @import("launcher.zig");
+    return .ok;
 }

@@ -1,0 +1,22 @@
+.{
+    .name = .pugl,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x76f905284eed4b09,
+    .dependencies = .{
+        .pugl = .{
+            .url = "git+https://github.com/nat3Github/c-lib-pugl-dev#266bea48d65608af48ad7f32d4306c1548be06c3",
+            .hash = "pugl-0.4.0-sVTl0TNnBQBSjAyctAh5h6b6dAWgH36eN9OOywpCF8BT",
+        },
+        .cairo = .{
+            .url = "git+https://github.com/bandithedoge/cairo.zig.git#00e62a596fcbdd298d0f54fb98a5237ee32a4e9d",
+            .hash = "cairo_zig-1.18.4-GbxI8SqnAACNAKk8IrZSGdtOCu97i7yMzGiLn-LdBscS",
+            .lazy = true,
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
