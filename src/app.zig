@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const c = @import("webview_api");
-
 const config_mod = @import("config.zig");
 const net = @import("net.zig");
 const install = @import("install.zig");
@@ -12,43 +10,7 @@ const Config = config_mod.Config;
 const Repo = config_mod.Repo;
 
 // ============================================================================
-// Pure launchers-JSON builder (unit-testable offline)
-// ============================================================================
-
-/// Serializable shape for one discovered launcher profile.
-const ProfileJson = struct {
-    kind: []const u8, // "prism" | "modrinth"
-    name: []const u8,
-    gameDir: []const u8,
-    root: []const u8,
-};
-
-/// Serializable shape of the whole listLaunchers() response.
-const LaunchersJson = struct {
-    profiles: []ProfileJson,
-    errors: [][]const u8,
-};
-
-/// Build the listLaunchers() response JSON from a Discovery. Caller owns.
-pub fn buildLaunchersJson(allocator: Allocator, d: *const launcher.Discovery) ![]u8 {
-    const out = try allocator.alloc(ProfileJson, d.profiles.len);
-    defer allocator.free(out);
-    for (d.profiles, out) |p, *o| {
-        o.* = .{
-            .kind = @tagName(p.kind),
-            .name = p.name,
-            .gameDir = p.gameDir,
-            .root = p.root,
-        };
-    }
-    return try std.json.Stringify.valueAlloc(allocator, LaunchersJson{
-        .profiles = out,
-        .errors = d.errors,
-    }, .{});
-}
-
-// ============================================================================
-// Pure state-JSON builder (unit-testable offline)
+// Shared state types
 // ============================================================================
 
 /// One row of per-repo status for the UI, matched to a Config repo by
@@ -59,107 +21,71 @@ pub const RepoStatus = struct {
     status: []const u8,
 };
 
-/// Emit the JSON blob the UI (Task 7) renders:
-/// `{"minecraftDir":"...","repos":[{"owner":...,"name":...,"installedVersion":
-/// "v0.1.3"|null,"installedJar":...|null,"status":"..."}, ...]}`.
-/// Each entry of `statuses` is paired with the repo whose `owner` AND `name`
-/// match it (linear scan — the config can mutate mid-refresh, so index
-/// pairing would drift); repos with no matching status get an empty status.
-/// One row per `cfg.repos` entry, in `cfg.repos` order. Everything is
-/// serialized immediately, so nothing is retained past the call.
-pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []const RepoStatus) ![]u8 {
-    var out = try std.ArrayList(u8).initCapacity(allocator, 256);
-    errdefer out.deinit(allocator);
-
-    try out.appendSlice(allocator, "{\"minecraftDir\":");
-    try appendJsonString(allocator, &out, cfg.minecraftDir);
-    try out.appendSlice(allocator, ",\"repos\":[");
-
-    for (cfg.repos, 0..) |repo, i| {
-        if (i > 0) try out.appendSlice(allocator, ",");
-        try out.appendSlice(allocator, "{\"owner\":");
-        try appendJsonString(allocator, &out, repo.owner);
-        try out.appendSlice(allocator, ",\"name\":");
-        try appendJsonString(allocator, &out, repo.name);
-        try out.appendSlice(allocator, ",\"installedVersion\":");
-        if (repo.installedVersion) |v| {
-            try appendJsonString(allocator, &out, v);
-        } else {
-            try out.appendSlice(allocator, "null");
-        }
-        try out.appendSlice(allocator, ",\"installedJar\":");
-        if (repo.installedJar) |v| {
-            try appendJsonString(allocator, &out, v);
-        } else {
-            try out.appendSlice(allocator, "null");
-        }
-        try out.appendSlice(allocator, ",\"status\":");
-        const status: []const u8 = blk: {
-            for (statuses) |s| {
-                if (std.mem.eql(u8, s.owner, repo.owner) and std.mem.eql(u8, s.name, repo.name)) {
-                    break :blk s.status;
-                }
-            }
-            break :blk "";
-        };
-        try appendJsonString(allocator, &out, status);
-        try out.appendSlice(allocator, "}");
-    }
-
-    try out.appendSlice(allocator, "]}");
-    return try out.toOwnedSlice(allocator);
-}
-
-/// Append `s` as a quoted, escaped JSON string (via std.json's stringifier).
-fn appendJsonString(allocator: Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
-    const encoded = try std.json.Stringify.valueAlloc(allocator, s, .{});
-    defer allocator.free(encoded);
-    try out.appendSlice(allocator, encoded);
-}
-
-// ============================================================================
-// App: JS↔Zig bridge + background refresh worker
-// ============================================================================
-
-/// The embedded UI document; `@embedFile("ui.html")` resolves to `src/ui.html`
-/// (relative to the module root, `src/main.zig`).
-const ui_html = @embedFile("ui.html");
+/// Persistent (across frames) UI input state. dvui is immediate-mode: widgets
+/// are rebuilt every frame, so anything the user types must live here.
+pub const UiState = struct {
+    /// Backing storage for the minecraft-folder textEntry (`.buffer` mode
+    /// finds its length from the first NUL, which TextEntryWidget maintains).
+    mc_dir_buf: [1024]u8 = @splat(0),
+    /// True when `mc_dir_buf` must be re-seeded from `cfg.minecraftDir`
+    /// (first frame, or after a launcher profile was selected).
+    mc_dir_dirty: bool = true,
+    /// Backing list for the add-repo textEntry (`.array_list` mode).
+    add_buf: std.ArrayList(u8) = .empty,
+};
 
 /// Blocking mutex over an atomic flag (std.Thread.Mutex no longer exists in
-/// Zig 0.17; std.Io.Mutex needs an Io handle, which the C bind callbacks on
-/// the GUI thread do not have). Critical sections here are short, so a
-/// yield-loop is fine.
+/// Zig 0.17; std.Io.Mutex needs an Io handle, which neither the GUI thread
+/// nor the refresh worker has at every call site). Critical sections here are
+/// short, so a yield-loop is fine.
 const SpinMutex = struct {
     locked: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    fn lock(self: *SpinMutex) void {
+    pub fn lock(self: *SpinMutex) void {
         while (self.locked.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
             std.Thread.yield() catch {};
         }
     }
 
-    fn unlock(self: *SpinMutex) void {
+    pub fn unlock(self: *SpinMutex) void {
         self.locked.store(false, .release);
     }
 };
 
+// ============================================================================
+// App: shared state + background refresh worker
+// ============================================================================
+
 pub const App = struct {
     allocator: Allocator,
-    /// Webview handle; created in `run` and used from bound callbacks and the
-    /// refresh worker's dispatch calls.
-    w: c.webview_t = null,
     /// Always allocator-owned (see `cloneConfig`) — never aliases the global
     /// `seeded_repos` backing `defaultRepos()`.
     cfg: Config,
-    /// Guards `cfg` across the GUI thread (bind callbacks) and the refresh
-    /// worker thread.
+    /// Guards `cfg`, `statuses` and `stopped` across the GUI thread (dvui
+    /// frame callbacks) and the refresh worker thread.
     mutex: SpinMutex = .{},
     /// True while a refresh worker is running (guards double-spawn; also read
-    /// by `run`'s drain loop after `webview_run` returns).
+    /// by `drainRefresh` after the window closes).
     refreshing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    /// Set under the mutex once the webview handle is destroyed; worker paths
-    /// check it before calling `webview_dispatch` on `w`.
+    /// Set under the mutex once the window is about to go away; the worker
+    /// checks it before calling `dvui.refresh` on `win`.
     stopped: bool = false,
+    /// dvui window handle (opaque here — this file stays free of the dvui
+    /// import so unit tests do not link the GUI stack). Set once from the
+    /// GUI thread (`appInit`) together with `wake`.
+    win: ?*anyopaque = null,
+    /// Callback that wakes the GUI thread (implemented in `main.zig` as
+    /// `dvui.refresh(win, ...)`); called by the worker with `win` after each
+    /// repo. Set once from the GUI thread before any worker can run.
+    wake: ?*const fn (?*anyopaque) void = null,
+    /// Per-repo status strings for the UI, keyed by owner+name. Guarded by
+    /// `mutex`; entries are allocator-owned and freed in `deinit`.
+    statuses: std.ArrayList(RepoStatus) = .empty,
+    /// Most recent launcher discovery. GUI-thread only — the refresh worker
+    /// never touches it, so the frame renders it without the lock.
+    launchers: ?launcher.Discovery = null,
+    /// Persistent UI text buffers (see `UiState`).
+    ui: UiState = .{},
 
     /// Store a deep, allocator-owned clone of `cfg`. The caller's copy (which
     /// may slice the global seed from `defaultRepos()`) is left untouched.
@@ -168,46 +94,25 @@ pub const App = struct {
         return .{ .allocator = allocator, .cfg = owned };
     }
 
+    /// Free everything the App owns. The caller must have drained the refresh
+    /// worker first (`drainRefresh`) so no other thread touches this state.
     pub fn deinit(self: *App) void {
-        // Safe because `run` drains the refresh worker and destroys the
-        // webview (setting `stopped`) before returning; `main` calls `deinit`
-        // only after `run` completes, so no worker can touch `cfg`/`w` here.
+        self.clearStatusesLocked();
+        self.statuses.deinit(self.allocator);
+        if (self.launchers) |d| launcher.freeDiscovery(self.allocator, d);
+        self.ui.add_buf.deinit(self.allocator);
         config_mod.freeConfig(self.allocator, self.cfg);
         self.cfg = undefined;
     }
 
-    /// Create the webview, load the embedded UI document, bind the JS
-    /// callables (passing `*App` as the C callback arg), and run the event
-    /// loop until the window closes.
-    pub fn run(self: *App) !void {
-        const w = c.webview_create(0, null);
-        if (w == null) return error.WebviewCreateFailed;
-        self.w = w;
-
-        _ = c.webview_set_title(w, "modsync");
-        _ = c.webview_set_size(w, 520, 640, c.WEBVIEW_HINT_NONE);
-        _ = c.webview_set_html(w, ui_html);
-
-        const app_arg: ?*anyopaque = self;
-        _ = c.webview_bind(w, "getConfig", cbGetConfig, app_arg);
-        _ = c.webview_bind(w, "setMinecraftDir", cbSetMinecraftDir, app_arg);
-        _ = c.webview_bind(w, "addRepo", cbAddRepo, app_arg);
-        _ = c.webview_bind(w, "removeRepo", cbRemoveRepo, app_arg);
-        _ = c.webview_bind(w, "startRefresh", cbStartRefresh, app_arg);
-        _ = c.webview_bind(w, "listLaunchers", cbListLaunchers, app_arg);
-        _ = c.webview_bind(w, "selectProfile", cbSelectProfile, app_arg);
-        _ = c.webview_bind(w, "restoreDefaults", cbRestoreDefaults, app_arg);
-
-        _ = c.webview_run(w);
-
-        // The window is closed, but a detached refresh worker may still be
-        // running (downloads take seconds). Drain it before destroying the
-        // webview: the worker calls `webview_dispatch(w, ...)` and touches
-        // `cfg`, both of which die with the webview / `deinit`. The worker
-        // clears `refreshing` as its very last action (its topmost `defer`),
-        // so once the flag reads false nothing else will run. `std.Thread`
-        // has no `sleep` in 0.17 and an Io handle isn't available here, so
-        // the wait is a yield-loop.
+    /// Block until the background refresh worker has fully exited, then mark
+    /// the app stopped. Must run before the dvui window is destroyed: the
+    /// worker calls `dvui.refresh(win, ...)` and touches `cfg`, both of which
+    /// die with the window / `deinit`. The worker clears `refreshing` as its
+    /// very last action (its topmost `defer`), so once the flag reads false
+    /// nothing else will run. `std.Thread` has no `sleep` in 0.17 and an Io
+    /// handle isn't available here, so the wait is a yield-loop.
+    pub fn drainRefresh(self: *App) void {
         while (true) {
             self.mutex.lock();
             const busy = self.refreshing.load(.acquire);
@@ -215,23 +120,100 @@ pub const App = struct {
             if (!busy) break;
             std.Thread.yield() catch {};
         }
-        {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            self.stopped = true;
-        }
-        _ = c.webview_destroy(w);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.stopped = true;
     }
 
     // ------------------------------------------------------------------
-    // Config mutation (callers hold the mutex)
+    // Config mutation (GUI thread; these take the mutex themselves)
     // ------------------------------------------------------------------
+
+    /// Set + persist the minecraft folder. Returns whether the save worked.
+    pub fn setMinecraftDir(self: *App, path: []const u8) !bool {
+        const new_dir = try self.allocator.dupe(u8, path);
+        errdefer self.allocator.free(new_dir);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const old = self.cfg.minecraftDir;
+        self.cfg.minecraftDir = new_dir; // ownership transferred to the config
+        self.allocator.free(old);
+        config_mod.save(&self.cfg) catch return false;
+        return true;
+    }
+
+    /// Re-scan the filesystem for launcher profiles (Prism, Modrinth) and
+    /// cache the result. GUI-thread only; on failure the old list is kept.
+    pub fn rescanLaunchers(self: *App) !void {
+        const d = try launcher.discoverAll(self.allocator);
+        if (self.launchers) |old| launcher.freeDiscovery(self.allocator, old);
+        self.launchers = d;
+    }
+
+    /// Set minecraftDir + selectedProfile if (and only if) `game_dir` matches
+    /// a currently discovered profile, then persist. Returns whether it did.
+    pub fn selectProfile(self: *App, game_dir: []const u8) !bool {
+        // Discover OUTSIDE the lock (filesystem scan), then decide under it.
+        const d = launcher.discoverAll(self.allocator) catch return false;
+        defer launcher.freeDiscovery(self.allocator, d);
+
+        var matched: ?launcher.Profile = null;
+        for (d.profiles) |p| {
+            if (std.mem.eql(u8, p.gameDir, game_dir)) {
+                matched = p;
+                break;
+            }
+        }
+        const p = matched orelse return false; // not an offered profile — reject
+
+        const kind = try self.allocator.dupe(u8, @tagName(p.kind));
+        errdefer self.allocator.free(kind);
+        const name = try self.allocator.dupe(u8, p.name);
+        errdefer self.allocator.free(name);
+        const new_dir = try self.allocator.dupe(u8, p.gameDir);
+        errdefer self.allocator.free(new_dir);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const old = self.cfg.minecraftDir;
+        self.cfg.minecraftDir = new_dir; // ownership transferred to the config
+        self.allocator.free(old);
+        if (self.cfg.selectedProfile) |old_sp| {
+            self.allocator.free(old_sp.kind);
+            self.allocator.free(old_sp.name);
+            self.allocator.free(old_sp.gameDir);
+        }
+        self.cfg.selectedProfile = .{ .kind = kind, .name = name, .gameDir = new_dir };
+
+        config_mod.save(&self.cfg) catch return false;
+        return true;
+    }
+
+    /// Replace the repo list with the seed (`<config-dir>/defaults.json`,
+    /// else embedded) and persist.
+    pub fn restoreDefaults(self: *App) !bool {
+        const seeded = config_mod.defaultRepos(self.allocator) catch return false;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        freeRepoSlice(self.allocator, self.cfg.repos);
+        self.cfg.repos = seeded; // ownership transferred to the config
+
+        config_mod.save(&self.cfg) catch return false;
+        return true;
+    }
 
     /// Parse `"owner/name"`, append a fresh Repo (null installed fields),
     /// free the OLD owned repos slice, and persist. Never touches the global
     /// seed — `cfg.repos` is always the allocator-owned clone from `init`.
-    fn addRepo(self: *App, owner_and_name: []const u8) !bool {
+    pub fn addRepo(self: *App, owner_and_name: []const u8) !bool {
         const owner, const name = (parseOwnerName(owner_and_name) orelse return false);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const old = self.cfg.repos;
         const new_repos = try self.allocator.alloc(Repo, old.len + 1);
@@ -260,8 +242,11 @@ pub const App = struct {
 
     /// Build a NEW repos slice excluding the `"owner/name"` match, free the
     /// removed entry's strings plus the old owned slice, and persist.
-    fn removeRepo(self: *App, owner_and_name: []const u8) !bool {
+    pub fn removeRepo(self: *App, owner_and_name: []const u8) !bool {
         const owner, const name = (parseOwnerName(owner_and_name) orelse return false);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
         const old = self.cfg.repos;
         var match: ?usize = null;
@@ -295,6 +280,58 @@ pub const App = struct {
 
         config_mod.save(&self.cfg) catch return false;
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Status map (callers hold the mutex)
+    // ------------------------------------------------------------------
+
+    /// Record `status` (allocator-owned; ownership transfers to the map)
+    /// against `owner`/`name`, replacing any previous status for that repo.
+    fn setStatusLocked(self: *App, owner: []const u8, name: []const u8, status: []const u8) void {
+        for (self.statuses.items) |*s| {
+            if (std.mem.eql(u8, s.owner, owner) and std.mem.eql(u8, s.name, name)) {
+                self.allocator.free(s.status);
+                s.status = status;
+                return;
+            }
+        }
+        const o = self.allocator.dupe(u8, owner) catch {
+            self.allocator.free(status);
+            return;
+        };
+        const n = self.allocator.dupe(u8, name) catch {
+            self.allocator.free(o);
+            self.allocator.free(status);
+            return;
+        };
+        self.statuses.append(self.allocator, .{ .owner = o, .name = n, .status = status }) catch {
+            self.allocator.free(o);
+            self.allocator.free(n);
+            self.allocator.free(status);
+        };
+    }
+
+    /// The status string for a repo, or null if it has none yet. The slice
+    /// is valid until the next status update for this repo.
+    pub fn findStatusLocked(self: *App, owner: []const u8, name: []const u8) ?[]const u8 {
+        for (self.statuses.items) |s| {
+            if (std.mem.eql(u8, s.owner, owner) and std.mem.eql(u8, s.name, name)) {
+                return s.status;
+            }
+        }
+        return null;
+    }
+
+    /// Free every status entry, keeping the allocation. Caller holds the
+    /// mutex (or has already drained the worker in `deinit`).
+    fn clearStatusesLocked(self: *App) void {
+        for (self.statuses.items) |s| {
+            self.allocator.free(s.owner);
+            self.allocator.free(s.name);
+            self.allocator.free(s.status);
+        }
+        self.statuses.clearRetainingCapacity();
     }
 
     // ------------------------------------------------------------------
@@ -385,16 +422,36 @@ pub const App = struct {
         return std.fmt.allocPrint(self.allocator, "installed {s}", .{fetched.tag}) catch unreachable;
     }
 
+    /// Start a background refresh (no-op if one is already running). The
+    /// per-repo status map is cleared first so rows start fresh; each repo
+    /// publishes its status under the mutex and wakes the GUI thread with
+    /// `dvui.refresh`.
+    pub fn startRefresh(self: *App) void {
+        if (self.refreshing.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
+            return; // already running
+        }
+        {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.clearStatusesLocked();
+        }
+        const t = std.Thread.spawn(.{}, refreshWorkerEntry, .{self}) catch {
+            self.refreshing.store(false, .release);
+            return;
+        };
+        t.detach();
+    }
+
     /// Background thread body: snapshot the repo list, fetch/install each repo
     /// in turn (per-repo errors become status strings, never abort the loop),
-    /// push fresh state JSON to the UI after each repo, persist at the end.
+    /// publish each status + wake the GUI after each repo, persist at the end.
     fn refreshWorker(self: *App) void {
-        // Drain-loop contract: `cbStartRefresh` already set `refreshing` true
+        // Drain-loop contract: `startRefresh` already set `refreshing` true
         // before spawning this thread (atomically, to guard double-spawn), and
         // this topmost defer clears it as the very last statement on EVERY
-        // exit path — including the early returns below. `run`'s post-
-        // `webview_run` drain loop spins on this flag, so it can never
-        // destroy the webview while any code in this function is still live.
+        // exit path — including the early returns below. `drainRefresh` spins
+        // on this flag, so it can never tear down the window while any code in
+        // this function is still live.
         defer self.refreshing.store(false, .release);
 
         // --- snapshot under the lock ---
@@ -419,25 +476,25 @@ pub const App = struct {
         self.mutex.unlock();
         defer for (repos) |r| freeRepoOwned(self.allocator, r);
 
-        const statuses = self.allocator.alloc(RepoStatus, repos.len) catch return;
-        var statuses_built: usize = 0;
-        defer self.allocator.free(statuses);
-        defer for (statuses[0..statuses_built]) |s| self.allocator.free(s.status);
-
         // One HTTP client for the whole run (struct literal; no init fn).
         var threaded = std.Io.Threaded.init(self.allocator, .{});
         var client: std.http.Client = .{ .allocator = self.allocator, .io = threaded.io() };
         defer client.deinit();
 
-        for (repos, 0..) |repo, i| {
+        for (repos) |repo| {
             const status = self.refreshRepo(&client, minecraft_dir, token, repo);
-            statuses[i] = .{ .owner = repo.owner, .name = repo.name, .status = status };
-            statuses_built = i + 1;
 
+            // Publish the status under the lock, grab the window, then wake
+            // the GUI thread (dvui.refresh is thread-safe; it just queues an
+            // event so the frame loop redraws).
             self.mutex.lock();
-            const json = buildStateJson(self.allocator, &self.cfg, statuses[0..statuses_built]);
+            self.setStatusLocked(repo.owner, repo.name, status); // takes ownership
+            const win = if (self.stopped) null else self.win;
+            const wake = self.wake;
             self.mutex.unlock();
-            if (json) |j| self.pushState(j) else |_| {}
+            if (win) |w| {
+                if (wake) |wake_fn| wake_fn(w);
+            }
         }
 
         // --- persist the updated config ---
@@ -445,270 +502,7 @@ pub const App = struct {
         defer self.mutex.unlock();
         config_mod.save(&self.cfg) catch {};
     }
-
-    /// Hand `json` (an already-built state blob) to the GUI thread, which
-    /// evals `renderState(...)` in the page. Takes ownership of `json`.
-    fn pushState(self: *App, json: []const u8) void {
-        // Never touch the webview handle after teardown: if the window has
-        // been closed and the webview destroyed, just drop the payload.
-        {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            if (self.stopped) {
-                self.allocator.free(json);
-                return;
-            }
-        }
-        const js = std.fmt.allocPrintSentinel(self.allocator, "window.renderState && renderState({s});", .{json}, 0) catch {
-            self.allocator.free(json);
-            return;
-        };
-        self.allocator.free(json);
-
-        const ctx = self.allocator.create(DispatchCtx) catch {
-            self.allocator.free(js);
-            return;
-        };
-        ctx.* = .{ .js = js, .allocator = self.allocator };
-        _ = c.webview_dispatch(self.w, dispatchRender, ctx);
-    }
 };
-
-// ============================================================================
-// webview bridge plumbing
-// ============================================================================
-
-const DispatchCtx = struct {
-    js: [*:0]u8,
-    allocator: Allocator,
-};
-
-/// Runs on the GUI thread (webview_dispatch guarantees it) — safe to eval.
-fn dispatchRender(w: c.webview_t, arg: ?*anyopaque) callconv(.c) void {
-    const ctx: *DispatchCtx = @ptrCast(@alignCast(arg.?));
-    defer {
-        ctx.allocator.free(std.mem.span(ctx.js));
-        ctx.allocator.destroy(ctx);
-    }
-    _ = c.webview_eval(w, ctx.js);
-}
-
-fn appFromArg(arg: ?*anyopaque) *App {
-    return @ptrCast(@alignCast(arg.?));
-}
-
-/// Reply to a bind callback with a JSON value string (NUL-terminated copy).
-fn respond(app: *App, id: [*c]const u8, json: []const u8) void {
-    const z = app.allocator.dupeSentinel(u8, json, 0) catch {
-        _ = c.webview_return(app.w, id, 0, "null");
-        return;
-    };
-    defer app.allocator.free(z);
-    _ = c.webview_return(app.w, id, 0, z.ptr);
-}
-
-/// Pull the first string out of the bind callback's JSON args array (`["x"]`).
-/// On success the caller owns the returned dupe.
-fn firstStringArg(app: *App, req: [*c]const u8, out: *[]const u8) bool {
-    const parsed = std.json.parseFromSlice([]const []const u8, app.allocator, std.mem.span(req), .{}) catch return false;
-    defer parsed.deinit();
-    if (parsed.value.len < 1) return false;
-    out.* = app.allocator.dupe(u8, parsed.value[0]) catch return false;
-    return true;
-}
-
-/// getConfig() → full state JSON (statuses empty until a refresh fills them).
-fn cbGetConfig(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    _ = req;
-    const app = appFromArg(arg);
-
-    app.mutex.lock();
-    defer app.mutex.unlock();
-    const json = buildStateJson(app.allocator, &app.cfg, &.{}) catch {
-        respond(app, id, "null");
-        return;
-    };
-    defer app.allocator.free(json);
-    respond(app, id, json);
-}
-
-/// setMinecraftDir(path) → "true"/"false"; persists.
-fn cbSetMinecraftDir(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    const app = appFromArg(arg);
-    var path: []const u8 = undefined;
-    if (!firstStringArg(app, req, &path)) {
-        respond(app, id, "false");
-        return;
-    }
-
-    app.mutex.lock();
-    defer app.mutex.unlock();
-    const old = app.cfg.minecraftDir;
-    app.cfg.minecraftDir = path; // ownership transferred to the config
-    app.allocator.free(old);
-    if (config_mod.save(&app.cfg)) {
-        respond(app, id, "true");
-    } else |_| {
-        respond(app, id, "false");
-    }
-}
-
-/// listLaunchers() → discovery JSON: {"profiles":[...],"errors":[...]}.
-fn cbListLaunchers(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    _ = req;
-    const app = appFromArg(arg);
-
-    const d = launcher.discoverAll(app.allocator) catch {
-        respond(app, id, "{\"profiles\":[],\"errors\":[\"discovery failed\"]}");
-        return;
-    };
-    defer launcher.freeDiscovery(app.allocator, d);
-
-    const json = buildLaunchersJson(app.allocator, &d) catch {
-        respond(app, id, "{\"profiles\":[],\"errors\":[\"discovery failed\"]}");
-        return;
-    };
-    defer app.allocator.free(json);
-    respond(app, id, json);
-}
-
-/// selectProfile(gameDir) → "true"/"false"; sets minecraftDir + selectedProfile
-/// if (and only if) the gameDir matches a discovered profile, then persists.
-fn cbSelectProfile(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    const app = appFromArg(arg);
-    var game_dir: []const u8 = undefined;
-    if (!firstStringArg(app, req, &game_dir)) {
-        respond(app, id, "false");
-        return;
-    }
-
-    // Discover OUTSIDE the lock (filesystem scan), then decide under the lock.
-    const d = launcher.discoverAll(app.allocator) catch {
-        app.allocator.free(game_dir);
-        respond(app, id, "false");
-        return;
-    };
-    defer launcher.freeDiscovery(app.allocator, d);
-
-    var matched: ?launcher.Profile = null;
-    for (d.profiles) |p| {
-        if (std.mem.eql(u8, p.gameDir, game_dir)) {
-            matched = p;
-            break;
-        }
-    }
-    const p = matched orelse {
-        app.allocator.free(game_dir); // not an offered profile — reject
-        respond(app, id, "false");
-        return;
-    };
-
-    app.mutex.lock();
-    defer app.mutex.unlock();
-
-    const kind = app.allocator.dupe(u8, @tagName(p.kind)) catch {
-        app.allocator.free(game_dir);
-        respond(app, id, "false");
-        return;
-    };
-    const name = app.allocator.dupe(u8, p.name) catch {
-        app.allocator.free(kind);
-        app.allocator.free(game_dir);
-        respond(app, id, "false");
-        return;
-    };
-
-    const old = app.cfg.minecraftDir;
-    app.cfg.minecraftDir = game_dir; // ownership transferred to the config
-    app.allocator.free(old);
-    if (app.cfg.selectedProfile) |old_sp| {
-        app.allocator.free(old_sp.kind);
-        app.allocator.free(old_sp.name);
-        app.allocator.free(old_sp.gameDir);
-    }
-    app.cfg.selectedProfile = .{ .kind = kind, .name = name, .gameDir = game_dir };
-
-    if (config_mod.save(&app.cfg)) {
-        respond(app, id, "true");
-    } else |_| {
-        respond(app, id, "false");
-    }
-}
-
-/// restoreDefaults() → "true"/"false"; replaces the repo list with the seed
-/// (from `<config-dir>/defaults.json`, else embedded) and persists.
-fn cbRestoreDefaults(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    _ = req;
-    const app = appFromArg(arg);
-
-    const seeded = config_mod.defaultRepos(app.allocator) catch {
-        respond(app, id, "false");
-        return;
-    };
-
-    app.mutex.lock();
-    defer app.mutex.unlock();
-
-    freeRepoSlice(app.allocator, app.cfg.repos);
-    app.cfg.repos = seeded; // ownership transferred to the config
-
-    if (config_mod.save(&app.cfg)) {
-        respond(app, id, "true");
-    } else |_| {
-        respond(app, id, "false");
-    }
-}
-
-/// addRepo("owner/name") → "true"/"false"; appends + persists.
-fn cbAddRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    const app = appFromArg(arg);
-    var spec: []const u8 = undefined;
-    if (!firstStringArg(app, req, &spec)) {
-        respond(app, id, "false");
-        return;
-    }
-    defer app.allocator.free(spec);
-
-    app.mutex.lock();
-    defer app.mutex.unlock();
-    const ok = app.addRepo(spec) catch false;
-    respond(app, id, if (ok) "true" else "false");
-}
-
-/// removeRepo("owner/name") → "true"/"false"; filters + persists.
-fn cbRemoveRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    const app = appFromArg(arg);
-    var spec: []const u8 = undefined;
-    if (!firstStringArg(app, req, &spec)) {
-        respond(app, id, "false");
-        return;
-    }
-    defer app.allocator.free(spec);
-
-    app.mutex.lock();
-    defer app.mutex.unlock();
-    const ok = app.removeRepo(spec) catch false;
-    respond(app, id, if (ok) "true" else "false");
-}
-
-/// startRefresh() → "true" if a worker was spawned, "false" if one is already
-/// running (or spawning failed). Returns immediately; UI stays responsive.
-fn cbStartRefresh(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
-    _ = req;
-    const app = appFromArg(arg);
-
-    if (app.refreshing.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
-        respond(app, id, "false"); // already running
-        return;
-    }
-    const t = std.Thread.spawn(.{}, refreshWorkerEntry, .{app}) catch {
-        app.refreshing.store(false, .release);
-        respond(app, id, "false");
-        return;
-    };
-    t.detach();
-    respond(app, id, "true");
-}
 
 fn refreshWorkerEntry(app: *App) void {
     app.refreshWorker();
@@ -782,92 +576,6 @@ fn freeRepoSlice(allocator: Allocator, repos: []Repo) void {
 // Tests
 // ============================================================================
 
-test "buildStateJson: installed repo row carries owner, name, version, jar, status" {
-    var repos = [1]Repo{
-        .{ .owner = "cumsauce", .name = "gore", .installedVersion = "v0.1.2", .installedJar = "gore-0.1.2.jar" },
-    };
-    const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
-    const statuses = [1]RepoStatus{
-        .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2" },
-    };
-
-    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
-    defer std.testing.allocator.free(json);
-
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"minecraftDir\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"/tmp/mc\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"gore\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"v0.1.2\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"gore-0.1.2.jar\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"installed v0.1.2\"") != null);
-}
-
-test "buildStateJson: no-releases row plus null installedVersion serializes as null" {
-    var repos = [2]Repo{
-        .{ .owner = "cumsauce", .name = "gore", .installedVersion = null, .installedJar = null },
-        .{ .owner = "desocketed", .name = "surprise" },
-    };
-    const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
-    const statuses = [2]RepoStatus{
-        .{ .owner = "cumsauce", .name = "gore", .status = "no releases" },
-        .{ .owner = "desocketed", .name = "surprise", .status = "no releases" },
-    };
-
-    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
-    defer std.testing.allocator.free(json);
-
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"surprise\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"no releases\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"installedVersion\":null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"installedJar\":null") != null);
-}
-
-test "buildStateJson: statuses pair by owner+name, not by index" {
-    var repos = [2]Repo{
-        .{ .owner = "cumsauce", .name = "gore", .installedVersion = "v0.1.2", .installedJar = "gore-0.1.2.jar" },
-        .{ .owner = "desocketed", .name = "surprise" },
-    };
-    const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
-    // Deliberately ordered DIFFERENTLY from cfg.repos (plus a stale entry for
-    // a repo that is no longer in the config) — simulates a mid-refresh
-    // add/remove shifting indices. Pairing must be by owner+name.
-    const statuses = [3]RepoStatus{
-        .{ .owner = "desocketed", .name = "surprise", .status = "no releases" },
-        .{ .owner = "ghost", .name = "removed", .status = "stale status" },
-        .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2" },
-    };
-
-    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
-    defer std.testing.allocator.free(json);
-
-    // Brief's four substrings, all in ONE JSON blob:
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"gore\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"v0.1.2\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"surprise\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"no releases\"") != null);
-
-    // The stale status must NOT appear — cfg.repos drives the rows.
-    try std.testing.expect(std.mem.indexOf(u8, json, "stale status") == null);
-
-    // Rows come out in cfg.repos order, each carrying the status that
-    // matched ITS owner+name (not whatever happened to share an index):
-    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\"}";
-    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\"}";
-    const gore_at = std.mem.indexOf(u8, json, gore_row) orelse return error.TestUnexpectedResult;
-    const surprise_at = std.mem.indexOf(u8, json, surprise_row) orelse return error.TestUnexpectedResult;
-    try std.testing.expect(gore_at < surprise_at);
-}
-
-test "buildStateJson: repo without a status row gets an empty status" {
-    var repos = [1]Repo{.{ .owner = "a", .name = "b" }};
-    const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
-
-    const json = try buildStateJson(std.testing.allocator, &cfg, &.{});
-    defer std.testing.allocator.free(json);
-
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"\"") != null);
-}
-
 test "cloneConfig deep-copies the seed so mutation never touches it" {
     const alloc = std.testing.allocator;
     const original = try config_mod.defaultRepos(alloc);
@@ -885,26 +593,50 @@ test "cloneConfig deep-copies the seed so mutation never touches it" {
     try std.testing.expect(cfg.repos[4].name.ptr != original[4].name.ptr);
 }
 
-test "buildLaunchersJson includes profiles and errors" {
-    var profiles = [_]launcher.Profile{
-        .{ .kind = .prism, .name = "A", .gameDir = "/m/A", .root = "/r1" },
+test "statuses pair by owner+name, not by insertion order" {
+    const alloc = std.testing.allocator;
+    var repos = [2]Repo{
+        .{ .owner = "cumsauce", .name = "gore", .installedVersion = "v0.1.2", .installedJar = "gore-0.1.2.jar" },
+        .{ .owner = "desocketed", .name = "surprise" },
     };
-    var errs = [_][]const u8{"denied"};
-    const d = launcher.Discovery{ .profiles = &profiles, .errors = &errs };
-    const json = try buildLaunchersJson(std.testing.allocator, &d);
-    defer std.testing.allocator.free(json);
+    var app = try App.init(alloc, Config{
+        .minecraftDir = "/tmp/mc",
+        .githubToken = null,
+        .repos = &repos,
+    });
+    defer app.deinit();
 
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"prism\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"A\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "/m/A") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "denied") != null);
+    app.mutex.lock();
+    defer app.mutex.unlock();
+
+    // setStatusLocked takes ownership of the status string, so hand it
+    // allocator-owned dupes (as refreshWorker does), never literals.
+    //
+    // Deliberately ordered DIFFERENTLY from cfg.repos (plus a stale entry
+    // for a repo that is no longer in the config) — simulates a mid-refresh
+    // add/remove shifting indices. Pairing must be by owner+name.
+    app.setStatusLocked("desocketed", "surprise", try alloc.dupe(u8, "no releases"));
+    app.setStatusLocked("ghost", "removed", try alloc.dupe(u8, "stale status"));
+    app.setStatusLocked("cumsauce", "gore", try alloc.dupe(u8, "installed v0.1.2"));
+    // Re-setting an existing repo replaces its status in place (no dup of
+    // owner/name; testing.allocator catches any leak of the old status).
+    app.setStatusLocked("cumsauce", "gore", try alloc.dupe(u8, "up to date"));
+
+    try std.testing.expectEqual(@as(usize, 3), app.statuses.items.len);
+    try std.testing.expectEqualStrings("up to date", app.findStatusLocked("cumsauce", "gore").?);
+    try std.testing.expectEqualStrings("no releases", app.findStatusLocked("desocketed", "surprise").?);
+    try std.testing.expectEqualStrings("stale status", app.findStatusLocked("ghost", "removed").?);
+    try std.testing.expect(app.findStatusLocked("nobody", "nothing") == null);
 }
 
-test "buildLaunchersJson with empty discovery emits empty arrays" {
-    const d = launcher.Discovery{ .profiles = &.{}, .errors = &.{} };
-    const json = try buildLaunchersJson(std.testing.allocator, &d);
-    defer std.testing.allocator.free(json);
+test "parseOwnerName splits owner/name" {
+    const ok = parseOwnerName("cumsauce/gore").?;
+    try std.testing.expectEqualStrings("cumsauce", ok[0]);
+    try std.testing.expectEqualStrings("gore", ok[1]);
 
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"profiles\":[]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"errors\":[]") != null);
+    try std.testing.expect(parseOwnerName("gore") == null);
+    try std.testing.expect(parseOwnerName("") == null);
+    try std.testing.expect(parseOwnerName("/gore") == null);
+    try std.testing.expect(parseOwnerName("cumsauce/") == null);
+    try std.testing.expect(parseOwnerName("a/b/c") == null);
 }
