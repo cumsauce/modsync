@@ -28,4 +28,5 @@ test {
     _ = @import("github.zig");
     _ = @import("install.zig");
     _ = @import("app.zig");
+    _ = @import("launcher.zig");
 }
