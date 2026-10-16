@@ -31,10 +31,31 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DWEBVIEW_STATIC" },
     });
 
-    if (target.result.os.tag == .macos) {
-        mod.linkFramework("WebKit", .{});
-        mod.linkFramework("Cocoa", .{});
-        mod.linkSystemLibrary("objc", .{});
+    // Native webview backends per OS (all vendored under
+    // lib/webview/webview/detail/backends/). Each needs that platform's system
+    // libraries, so binaries must be built on the target OS — Zig cannot
+    // cross-compile the GTK/WebView2 headers from macOS.
+    switch (target.result.os.tag) {
+        .macos => {
+            mod.linkFramework("WebKit", .{});
+            mod.linkFramework("Cocoa", .{});
+            mod.linkSystemLibrary("objc", .{});
+        },
+        .linux => {
+            // webkit2gtk is what the gtk_webkitgtk backend targets. These are
+            // the libs upstream webview links; exact -dev names confirmed by CI.
+            mod.linkSystemLibrary("webkit2gtk-4.1", .{});
+            mod.linkSystemLibrary("javascriptcoregtk-4.1", .{});
+            mod.linkSystemLibrary("gtk-3", .{});
+            mod.linkSystemLibrary("gobject-2.0", .{});
+            mod.linkSystemLibrary("glib-2.0", .{});
+            mod.linkSystemLibrary("pthread", .{});
+        },
+        .windows => {
+            // The win32_edge backend loads WebView2 at runtime via the loader;
+            // system libs needed to link are added here if CI reports them.
+        },
+        else => {},
     }
 
     const exe = b.addExecutable(.{
