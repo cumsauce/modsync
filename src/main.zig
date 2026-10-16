@@ -12,3 +12,7 @@ pub fn main() !void {
     _ = c.webview_run(w);
     _ = c.webview_destroy(w);
 }
+
+test {
+    _ = @import("config.zig");
+}
