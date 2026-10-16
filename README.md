@@ -7,8 +7,6 @@ Built with [Zig](https://ziglang.org) + [dvui](https://github.com/david-vanderso
 (immediate-mode GUI) on the pure-Zig [wio](https://github.com/ypsvlq/wio) backend —
 a native window driven by OpenGL, with no browser engine and no HTML/JS.
 
-![modsync window](docs/images/modsync.png)
-
 ## Install
 
 ### Download a release
