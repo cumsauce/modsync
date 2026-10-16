@@ -60,7 +60,18 @@ jobs:
           $ver = '1.0.2903.40'
           Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$ver/microsoft.web.webview2.$ver.nupkg" -OutFile wv2.nupkg
           Expand-Archive wv2.nupkg -DestinationPath wv2sdk
+
+          # WebView2.h needs EventToken.h + friends from the Windows SDK, which
+          # the windows-latest image ships under Windows Kits.
+          $kits = 'C:\Program Files (x86)\Windows Kits\10\Include'
+          $sdk = Get-ChildItem $kits -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $sdk) { throw "No Windows SDK include dir under $kits" }
+          $inc = $sdk.FullName
+          echo "Using Windows SDK include: $inc"
           echo "WEBVIEW2_INCLUDE=$PWD/wv2sdk/build/native/include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WINSDK_UM=$inc/um" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WINSDK_SHARED=$inc/shared" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WINSDK_WINRT=$inc/winrt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Zig version
         run: zig version
@@ -69,7 +80,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            zig build -Dwebview2-sdk="$WEBVIEW2_INCLUDE"
+            zig build -Dwebview2-sdk="$WEBVIEW2_INCLUDE" -Dwinsdk-um="$WINSDK_UM" -Dwinsdk-shared="$WINSDK_SHARED" -Dwinsdk-winrt="$WINSDK_WINRT"
           else
             zig build
           fi
@@ -134,13 +145,20 @@ jobs:
           $ver = '1.0.2903.40'
           Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$ver/microsoft.web.webview2.$ver.nupkg" -OutFile wv2.nupkg
           Expand-Archive wv2.nupkg -DestinationPath wv2sdk
+          $kits = 'C:\Program Files (x86)\Windows Kits\10\Include'
+          $sdk = Get-ChildItem $kits -Directory | Where-Object { $_.Name -match '^10\.' } | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $sdk) { throw "No Windows SDK include dir under $kits" }
+          $inc = $sdk.FullName
           echo "WEBVIEW2_INCLUDE=$PWD/wv2sdk/build/native/include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WINSDK_UM=$inc/um" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WINSDK_SHARED=$inc/shared" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WINSDK_WINRT=$inc/winrt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build (ReleaseSafe)
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            zig build -Doptimize=ReleaseSafe -Dwebview2-sdk="$WEBVIEW2_INCLUDE"
+            zig build -Doptimize=ReleaseSafe -Dwebview2-sdk="$WEBVIEW2_INCLUDE" -Dwinsdk-um="$WINSDK_UM" -Dwinsdk-shared="$WINSDK_SHARED" -Dwinsdk-winrt="$WINSDK_WINRT"
           else
             zig build -Doptimize=ReleaseSafe
           fi

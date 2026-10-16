@@ -39,6 +39,14 @@ pub fn build(b: *std.Build) void {
         if (webview2_sdk) |p| {
             mod.addIncludePath(.{ .cwd_relative = p });
         }
+        // WebView2.h transitively includes <EventToken.h> etc. from the Windows
+        // SDK. Pass -Dwinsdk-um / -Dwinsdk-shared / -Dwinsdk-winrt when those
+        // aren't already on the default include path.
+        for ([_][]const u8{ "winsdk-um", "winsdk-shared", "winsdk-winrt" }) |opt_name| {
+            if (b.option([]const u8, opt_name, "Windows SDK include dir")) |p| {
+                mod.addIncludePath(.{ .cwd_relative = p });
+            }
+        }
     }
 
     // Native webview backends per OS (all vendored under
@@ -71,6 +79,7 @@ pub fn build(b: *std.Build) void {
             mod.linkSystemLibrary("advapi32", .{});
             mod.linkSystemLibrary("shell32", .{});
             mod.linkSystemLibrary("shlwapi", .{});
+            mod.linkSystemLibrary("version", .{});
         },
         else => {},
     }
