@@ -41,7 +41,8 @@ and linked in CI (MSVC toolchain) but has not been runtime-tested.
   (`{repo}-*.jar`) and leaves every other file in `mods/` untouched.
 - Already-up-to-date mods are skipped (same tag **and** the jar is present).
 - Seed repos: `cumsauce/gore`, `cumsauce/foley`, `cumsauce/earshot`,
-  `cumsauce/stalker`, `desocketed/yakvc` — but you can add/remove any repo.
+  `cumsauce/stalker`, `cumsauce/aorta`, `desocketed/yakvc` — but you can add or
+  remove any repo.
 - Prereleases count (foley/earshot/yakvc are prerelease-only), so "newest" means
   the first non-draft release on the `releases?per_page=100` list.
 

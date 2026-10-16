@@ -26,15 +26,16 @@ pub const Config = struct {
 
 /// Backing storage for `defaultRepos`. Returned as a mutable slice because the
 /// interface has no allocator; callers may copy from it before mutating.
-var seeded_repos = [5]Repo{
+var seeded_repos = [_]Repo{
     .{ .owner = "cumsauce", .name = "gore" },
     .{ .owner = "cumsauce", .name = "foley" },
     .{ .owner = "cumsauce", .name = "earshot" },
     .{ .owner = "cumsauce", .name = "stalker" },
+    .{ .owner = "cumsauce", .name = "aorta" },
     .{ .owner = "desocketed", .name = "yakvc" },
 };
 
-/// The five repositories modsync seeds a fresh config with, in order.
+/// The repositories modsync seeds a fresh config with, in order.
 pub fn defaultRepos() []Repo {
     return &seeded_repos;
 }
@@ -235,16 +236,16 @@ fn dupeConfig(allocator: Allocator, src: Config) !Config {
     };
 }
 
-test "defaultRepos returns the five seeded repos in order" {
+test "defaultRepos returns the seeded repos in order" {
     const repos = defaultRepos();
-    try std.testing.expectEqual(@as(usize, 5), repos.len);
+    try std.testing.expectEqual(@as(usize, 6), repos.len);
     try std.testing.expectEqualStrings("cumsauce", repos[0].owner);
     try std.testing.expectEqualStrings("gore", repos[0].name);
-    try std.testing.expectEqualStrings("desocketed", repos[4].owner);
-    try std.testing.expectEqualStrings("yakvc", repos[4].name);
+    try std.testing.expectEqualStrings("desocketed", repos[5].owner);
+    try std.testing.expectEqualStrings("yakvc", repos[5].name);
 
-    const expected_owners = [_][]const u8{ "cumsauce", "cumsauce", "cumsauce", "cumsauce", "desocketed" };
-    const expected_names = [_][]const u8{ "gore", "foley", "earshot", "stalker", "yakvc" };
+    const expected_owners = [_][]const u8{ "cumsauce", "cumsauce", "cumsauce", "cumsauce", "cumsauce", "desocketed" };
+    const expected_names = [_][]const u8{ "gore", "foley", "earshot", "stalker", "aorta", "yakvc" };
     for (expected_owners, expected_names, repos) |eo, en, r| {
         try std.testing.expectEqualStrings(eo, r.owner);
         try std.testing.expectEqualStrings(en, r.name);
