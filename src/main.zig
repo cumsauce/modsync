@@ -14,19 +14,7 @@ pub fn main() !void {
     const loaded: ?config.Config = try config.load(alloc);
     defer if (loaded) |cfg| config.freeConfig(alloc, cfg);
 
-    var cfg = loaded orelse config.Config{
-        .minecraftDir = config.defaultMinecraftDir(),
-        .githubToken = null,
-        .repos = try config.defaultRepos(alloc),
-    };
-    if (loaded == null) {
-        // Seed repos are allocator-owned; App.init deep-clones them, and the
-        // clone is what gets freed — so release the originals here.
-        config.freeRepos(alloc, cfg.repos);
-        cfg.repos = &[_]config.Repo{};
-    }
-
-    var app = try App.init(alloc, cfg);
+    var app = try App.initFromLoaded(alloc, loaded);
     defer app.deinit();
     try app.run();
 }
