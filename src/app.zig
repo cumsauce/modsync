@@ -94,6 +94,26 @@ pub const App = struct {
         return .{ .allocator = allocator, .cfg = owned };
     }
 
+    /// Build the startup App from an optional loaded config. When `loaded` is
+    /// null (first run / no config), the seed repo list from `defaultRepos` is
+    /// used and then released — but only AFTER `App.init` has deep-cloned it,
+    /// so the App owns a full copy and the seed originals do not leak.
+    pub fn initFromLoaded(allocator: Allocator, loaded: ?Config) !App {
+        if (loaded) |cfg| return init(allocator, cfg);
+
+        const seeds = try config_mod.defaultRepos(allocator);
+        errdefer config_mod.freeRepos(allocator, seeds);
+        const cfg = Config{
+            .minecraftDir = config_mod.defaultMinecraftDir(),
+            .githubToken = null,
+            .repos = seeds,
+        };
+        const app = try init(allocator, cfg);
+        // `init` deep-cloned `seeds`; the App now owns its own copy.
+        config_mod.freeRepos(allocator, seeds);
+        return app;
+    }
+
     /// Free everything the App owns. The caller must have drained the refresh
     /// worker first (`drainRefresh`) so no other thread touches this state.
     pub fn deinit(self: *App) void {
@@ -575,6 +595,17 @@ fn freeRepoSlice(allocator: Allocator, repos: []Repo) void {
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "initFromLoaded seeds the repo list when no config is loaded" {
+    // Regression: a first run (no saved config) must end up with the seed
+    // repos, not an empty list. The App deep-clones the seed list and only
+    // then frees the originals, so `cfg.repos` is non-empty and owned.
+    var app = try App.initFromLoaded(std.testing.allocator, null);
+    defer app.deinit();
+
+    try std.testing.expect(app.cfg.repos.len > 0);
+    try std.testing.expectEqualStrings("gore", app.cfg.repos[0].name);
+}
 
 test "cloneConfig deep-copies the seed so mutation never touches it" {
     const alloc = std.testing.allocator;

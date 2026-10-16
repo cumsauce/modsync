@@ -40,19 +40,7 @@ pub fn appInit(win: *dvui.Window) !void {
     const loaded: ?config.Config = try config.load(alloc);
     defer if (loaded) |cfg| config.freeConfig(alloc, cfg);
 
-    var cfg = loaded orelse config.Config{
-        .minecraftDir = config.defaultMinecraftDir(),
-        .githubToken = null,
-        .repos = try config.defaultRepos(alloc),
-    };
-    if (loaded == null) {
-        // Seed repos are allocator-owned; App.init deep-clones them, and the
-        // clone is what gets freed — so release the originals here.
-        config.freeRepos(alloc, cfg.repos);
-        cfg.repos = &[_]config.Repo{};
-    }
-
-    var app = try app_mod.App.init(alloc, cfg);
+    var app = try app_mod.App.initFromLoaded(alloc, loaded);
     // Hand the refresh worker a way to wake this window.
     app.win = win;
     app.wake = wakeUi;
