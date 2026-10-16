@@ -6,7 +6,31 @@ sync with the newest GitHub *release* jars from a configurable set of repos.
 Built with [Zig](https://ziglang.org) + the vendored
 [webview/webview](https://github.com/webview/webview) C library — a native OS
 window (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) with no
-bundled browser engine. Single ~6.6 MB binary.
+bundled browser engine. Single ~1.7 MB binary (macOS, ReleaseSafe).
+
+## Download
+
+Grab the latest build for your platform from the
+[**Releases page**](../../releases/latest):
+
+| Platform | Asset |
+|----------|-------|
+| macOS (Apple Silicon) | `modsync-macos-arm64` |
+| Linux (x86_64) | `modsync-linux-x86_64` |
+| Windows (x86_64) | `modsync-windows-x86_64.exe` |
+
+The macOS binary is **unsigned**, so Gatekeeper warns on first launch. Either
+right-click → Open, or:
+
+```sh
+chmod +x modsync-macos-arm64
+xattr -d com.apple.quarantine modsync-macos-arm64
+./modsync-macos-arm64
+```
+
+macOS and Linux assets are built and tested in CI. The Windows asset is built
+and linked in CI (MSVC toolchain) but has not been runtime-tested.
+
 
 ## What it does
 
