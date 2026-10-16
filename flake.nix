@@ -17,15 +17,25 @@
       ];
       forAllSystems = f: lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
 
-      # GTK/WebKit are only needed on Linux; macOS uses the system WebKit/Cocoa
-      # frameworks via the SDK. zig_0_17 is the exact compiler (pkgs.zig is 0.16).
+      # The wio backend needs OpenGL + X11/Wayland dev libraries on Linux;
+      # macOS uses the system Cocoa/OpenGL frameworks via the SDK. zig_0_17 is
+      # the exact compiler (pkgs.zig is 0.16).
       nativeDeps = pkgs: [ pkgs.zig_0_17 ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.pkg-config ];
       runtimeDeps = pkgs: lib.optionals pkgs.stdenv.hostPlatform.isLinux (
         with pkgs;
         [
-          gtk3 # provides pkg-config module gtk+-3.0
-          glib # provides glib-2.0 / gobject-2.0
-          webkitgtk_4_1 # provides webkit2gtk-4.1
+          libGL
+          libGLU
+          libx11
+          libxext
+          libxrandr
+          libxinerama
+          libxcursor
+          libxi
+          libxkbcommon
+          wayland
+          wayland-scanner
+          wayland-protocols
         ]
       );
     in
@@ -34,7 +44,7 @@
         default = modsync;
         modsync = pkgs.stdenv.mkDerivation (finalAttrs: {
           pname = "modsync";
-          version = "0.2.0";
+          version = "0.3.0";
 
           src = ./.;
 

@@ -3,10 +3,9 @@
 A small native desktop app that keeps **one** Minecraft install's `mods` folder in
 sync with the newest GitHub *release* jars from a configurable set of repos.
 
-Built with [Zig](https://ziglang.org) + the vendored
-[webview/webview](https://github.com/webview/webview) C library — a native OS
-window (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) with no
-bundled browser engine. Single ~1.7 MB binary (macOS, ReleaseSafe).
+Built with [Zig](https://ziglang.org) + [dvui](https://github.com/david-vanderson/dvui)
+(immediate-mode GUI) on the pure-Zig [wio](https://github.com/ypsvlq/wio) backend —
+a native window driven by OpenGL, with no browser engine and no HTML/JS.
 
 ![modsync window](docs/images/modsync.png)
 
@@ -46,7 +45,7 @@ nix run github:cumsauce/modsync
 # ...or from a clone
 nix run .
 
-# Development shell (zig 0.17 + GTK/WebKit deps on Linux)
+# Development shell (zig 0.17 + OpenGL/X11/Wayland deps on Linux)
 nix develop
 ```
 
@@ -79,7 +78,7 @@ zig build test       # runs the unit tests
 zig build run        # builds and launches the app
 ```
 
-On Linux you also need the GTK/WebKit dev packages:
+On Linux you also need the OpenGL/X11/Wayland dev packages (for wio):
 
 ```sh
 # Debian/Ubuntu
@@ -142,14 +141,14 @@ src/config.zig    Config/Repo model, JSON persistence, seeded repos, config path
 src/github.zig    release JSON parsing + deterministic jar-asset selection
 src/net.zig       GitHub fetch + jar download over std.http (stdlib only)
 src/install.zig   mods-folder ops: mkdir, stale-jar detection, place jar
-src/app.zig       webview bridge (JS <-> Zig), background refresh worker
-src/ui.html       the UI (vanilla JS, embedded via @embedFile + webview_set_html)
-lib/webview/      vendored webview/webview C library (see TOOLCHAIN.md)
+src/app.zig       app state, config mutation, background refresh worker
+src/ui.zig        the dvui immediate-mode UI (one frame function)
+src/main.zig      dvui.App entry point + window wiring
 ```
 
 ## Notes
 
 - v1 target is macOS (verified: builds, launches, live-fetches). Path handling
-  and the webview bootstrap are the only platform-specific code, so Windows and
+  and the dvui/wio bootstrap are the only platform-specific code, so Windows and
   Linux builds are a natural next step.
 - Implementation plan and design doc live under `docs/superpowers/`.

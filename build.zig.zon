@@ -1,6 +1,6 @@
 .{
     .name = .modsync,
-    .version = "0.1.0",
+    .version = "0.3.0",
     .fingerprint = 0xef72b43f6ca28672, // Changing this has security and trust implications.
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
