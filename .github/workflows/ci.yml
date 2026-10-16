@@ -43,19 +43,23 @@ jobs:
       - name: Install Zig (unix)
         if: runner.os != 'Windows'
         run: |
+          set -eux
           curl -fsSL "https://ziglang.org/download/0.17.0/${{ matrix.zig }}" -o zig.tar.xz
-          tar -xf zig.tar.xz
-          ZIG_DIR="$(find . -maxdepth 1 -type d -name 'zig-*' | head -1)"
-          echo "$PWD/$ZIG_DIR" >> "$GITHUB_PATH"
+          mkdir -p "$HOME/zig"
+          tar -xf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+          "$HOME/zig/zig" version
 
       - name: Install Zig (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           Invoke-WebRequest "https://ziglang.org/download/0.17.0/${{ matrix.zig }}" -OutFile zig.zip
-          Expand-Archive zig.zip -DestinationPath .
-          $dir = (Get-ChildItem -Directory -Filter 'zig-*' | Select-Object -First 1).FullName
+          Expand-Archive zig.zip -DestinationPath "$env:USERPROFILE\zig"
+          $dir = (Get-ChildItem "$env:USERPROFILE\zig" -Directory | Select-Object -First 1).FullName
           echo $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$dir\zig.exe" version
 
       - name: Zig version
         run: zig version
@@ -106,19 +110,23 @@ jobs:
       - name: Install Zig (unix)
         if: runner.os != 'Windows'
         run: |
+          set -eux
           curl -fsSL "https://ziglang.org/download/0.17.0/${{ matrix.zig }}" -o zig.tar.xz
-          tar -xf zig.tar.xz
-          ZIG_DIR="$(find . -maxdepth 1 -type d -name 'zig-*' | head -1)"
-          echo "$PWD/$ZIG_DIR" >> "$GITHUB_PATH"
+          mkdir -p "$HOME/zig"
+          tar -xf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+          "$HOME/zig/zig" version
 
       - name: Install Zig (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           Invoke-WebRequest "https://ziglang.org/download/0.17.0/${{ matrix.zig }}" -OutFile zig.zip
-          Expand-Archive zig.zip -DestinationPath .
-          $dir = (Get-ChildItem -Directory -Filter 'zig-*' | Select-Object -First 1).FullName
+          Expand-Archive zig.zip -DestinationPath "$env:USERPROFILE\zig"
+          $dir = (Get-ChildItem "$env:USERPROFILE\zig" -Directory | Select-Object -First 1).FullName
           echo $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$dir\zig.exe" version
 
       - name: Build (ReleaseSafe)
         run: zig build -Doptimize=ReleaseSafe
