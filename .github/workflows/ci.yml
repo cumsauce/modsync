@@ -65,9 +65,17 @@ jobs:
       - name: Set up MSVC (windows)
         # webview's WebView2 headers need the MSVC toolchain + Windows SDK; Zig's
         # default MinGW target can't consume them. This puts cl/link + the SDK on
-        # PATH so `zig build -Dtarget=x86_64-windows-msvc` works.
+        # PATH. We then compile webview to a static lib with cl and let Zig link
+        # it, because Zig's bundled libc++ conflicts with MSVC's STL headers.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build webview static lib (windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl /nologo /c /std:c++17 /EHsc /DWEBVIEW_STATIC /Fo:webview.obj /I lib\webview /I "%WEBVIEW2_INCLUDE%" lib\webview\webview_impl.cc
+          lib /nologo /OUT:webview.lib webview.obj
 
       - name: Zig version
         run: zig version
@@ -76,7 +84,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            zig build -Dtarget=x86_64-windows-msvc -Dwebview2-sdk="$WEBVIEW2_INCLUDE"
+            zig build -Dtarget=x86_64-windows-msvc -Dwebview-prebuilt-lib="$PWD/webview.lib"
           else
             zig build
           fi
@@ -147,11 +155,18 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Build webview static lib (windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl /nologo /c /std:c++17 /EHsc /DWEBVIEW_STATIC /Fo:webview.obj /I lib\webview /I "%WEBVIEW2_INCLUDE%" lib\webview\webview_impl.cc
+          lib /nologo /OUT:webview.lib webview.obj
+
       - name: Build (ReleaseSafe)
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-windows-msvc -Dwebview2-sdk="$WEBVIEW2_INCLUDE"
+            zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-windows-msvc -Dwebview-prebuilt-lib="$PWD/webview.lib"
           else
             zig build -Doptimize=ReleaseSafe
           fi

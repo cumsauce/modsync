@@ -4,6 +4,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // On Windows/MSVC we link a prebuilt webview static lib (see below) and must
+    // NOT pull in Zig's bundled libc++ — it conflicts with MSVC's STL. When
+    // linking a prebuilt lib, C++ is already compiled, so Zig needs no C++ stdlib.
+    const webview_prebuilt_lib = b.option([]const u8, "webview-prebuilt-lib", "Path to a prebuilt webview static lib (Windows/MSVC)");
+
     const mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -11,7 +16,7 @@ pub fn build(b: *std.Build) void {
         // Zig 0.17: linkLibC()/linkLibCpp() were removed from Build.Module;
         // libc/libc++ are now module creation options (std/Build/Module.zig).
         .link_libc = true,
-        .link_libcpp = true,
+        .link_libcpp = webview_prebuilt_lib == null,
     });
 
     // Zig 0.17 removed @cImport; translate the vendored webview header into a
@@ -26,10 +31,20 @@ pub fn build(b: *std.Build) void {
 
     // Vendored webview C library (see lib/webview/ and TOOLCHAIN.md).
     mod.addIncludePath(b.path("lib/webview"));
-    mod.addCSourceFile(.{
-        .file = b.path("lib/webview/webview_impl.cc"),
-        .flags = &.{ "-std=c++17", "-DWEBVIEW_STATIC" },
-    });
+
+    // On Windows/MSVC we can't let Zig compile the C++ impl itself: Zig's
+    // bundled libc++ conflicts with MSVC's STL headers. So CI compiles
+    // webview_impl.cc into a static lib with `cl.exe` and passes its path here
+    // via -Dwebview-prebuilt-lib=<path>. When set, Zig only links it and never
+    // compiles C++, sidestepping the libc++ clash entirely.
+    if (webview_prebuilt_lib) |p| {
+        mod.addObjectFile(.{ .cwd_relative = p });
+    } else {
+        mod.addCSourceFile(.{
+            .file = b.path("lib/webview/webview_impl.cc"),
+            .flags = &.{ "-std=c++17", "-DWEBVIEW_STATIC" },
+        });
+    }
 
     // On Windows the win32_edge backend includes <WebView2.h>, which ships in
     // Microsoft's WebView2 SDK (a NuGet package), not in the tree. CI extracts
@@ -80,6 +95,13 @@ pub fn build(b: *std.Build) void {
             mod.linkSystemLibrary("shell32", .{});
             mod.linkSystemLibrary("shlwapi", .{});
             mod.linkSystemLibrary("version", .{});
+            // MSVC C++ runtime, needed because the prebuilt webview lib was
+            // compiled by cl.exe against MSVC's STL (Zig only links it).
+            if (webview_prebuilt_lib != null) {
+                mod.linkSystemLibrary("msvcprt", .{});
+                mod.linkSystemLibrary("vcruntime", .{});
+                mod.linkSystemLibrary("ucrt", .{});
+            }
         },
         else => {},
     }
