@@ -112,6 +112,10 @@ fn freeAsset(allocator: Allocator, a: Asset) void {
 
 /// First non-draft release in API order, else null. Prereleases are kept —
 /// drafts are unpublished work, prereleases are real releases.
+/// Returns the first non-draft release BY VALUE, but its `tag`/`assets` slices
+/// still alias the input slice's storage. The caller must keep `releases`
+/// alive for as long as the returned Release is used (do NOT free the list
+/// before using the selection).
 pub fn selectRelease(releases: []const Release) ?Release {
     for (releases) |r| {
         if (!r.draft) return r;
@@ -305,6 +309,17 @@ test "selectJarAsset prefers the {repo}- prefix over raw size" {
     };
     const picked_reversed = (try selectJarAsset(std.testing.allocator, &reversed, "foo")).?;
     try std.testing.expectEqualStrings("foo-1.0.jar", picked_reversed.name);
+}
+
+test "selectJarAsset falls back to largest when no asset matches the repo prefix" {
+    // >= 2 qualifiers, NONE prefixed with `foo-` → must return the largest
+    // of ALL qualifiers via the `best_all` branch (prefixed_total == 0).
+    const assets = [_]Asset{
+        .{ .name = "unrelated-a.jar", .size = 2, .browserDownloadUrl = "https://example/a" },
+        .{ .name = "other-9.9.jar", .size = 9000, .browserDownloadUrl = "https://example/b" },
+    };
+    const picked = (try selectJarAsset(std.testing.allocator, &assets, "foo")).?;
+    try std.testing.expectEqualStrings("other-9.9.jar", picked.name);
 }
 
 test "selectJarAsset breaks ties between prefixed jars by largest size" {
