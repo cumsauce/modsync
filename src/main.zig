@@ -14,6 +14,7 @@ pub fn main() !void {
 }
 
 test {
+    _ = @import("net.zig");
     _ = @import("config.zig");
     _ = @import("github.zig");
     _ = @import("install.zig");
