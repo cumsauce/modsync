@@ -195,7 +195,6 @@ pub const App = struct {
 
         const old = self.cfg.repos;
         const new_repos = try self.allocator.alloc(Repo, old.len + 1);
-        errdefer self.allocator.free(new_repos);
 
         var built: usize = 0;
         errdefer {
@@ -235,7 +234,6 @@ pub const App = struct {
         const i = match orelse return false;
 
         const new_repos = try self.allocator.alloc(Repo, old.len - 1);
-        errdefer self.allocator.free(new_repos);
 
         var built: usize = 0;
         errdefer {
@@ -383,6 +381,7 @@ pub const App = struct {
 
         const statuses = self.allocator.alloc(RepoStatus, repos.len) catch return;
         var statuses_built: usize = 0;
+        defer self.allocator.free(statuses);
         defer for (statuses[0..statuses_built]) |s| self.allocator.free(s.status);
 
         // One HTTP client for the whole run (struct literal; no init fn).

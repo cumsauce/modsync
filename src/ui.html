@@ -176,6 +176,7 @@ button.danger { color: var(--err); }
   // a refresh, and re-fetches after add/remove. Also re-enables the refresh
   // button whenever a pushed state lands.
   window.__applyState = function (state) {
+    setRefreshing(false);
     if (!state || typeof state !== "object") { renderList([]); return; }
     // Don't stomp the folder input while the user is typing in it.
     if (document.activeElement !== folder) folder.value = state.minecraftDir || "";
