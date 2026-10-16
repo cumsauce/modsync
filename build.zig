@@ -31,6 +31,16 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DWEBVIEW_STATIC" },
     });
 
+    // On Windows the win32_edge backend includes <WebView2.h>, which ships in
+    // Microsoft's WebView2 SDK (a NuGet package), not in the tree. CI extracts
+    // it and passes its include dir here: -Dwebview2-sdk=<path>/build/native/include
+    const webview2_sdk = b.option([]const u8, "webview2-sdk", "Path to the WebView2 SDK native include dir (Windows)");
+    if (target.result.os.tag == .windows) {
+        if (webview2_sdk) |p| {
+            mod.addIncludePath(.{ .cwd_relative = p });
+        }
+    }
+
     // Native webview backends per OS (all vendored under
     // lib/webview/webview/detail/backends/). Each needs that platform's system
     // libraries, so binaries must be built on the target OS — Zig cannot
@@ -52,8 +62,15 @@ pub fn build(b: *std.Build) void {
             mod.linkSystemLibrary("pthread", .{});
         },
         .windows => {
-            // The win32_edge backend loads WebView2 at runtime via the loader;
-            // system libs needed to link are added here if CI reports them.
+            // win32_edge backend: COM/OLE for the WebView2 loader; the WebView2
+            // runtime itself is loaded dynamically at run time.
+            mod.linkSystemLibrary("ole32", .{});
+            mod.linkSystemLibrary("oleaut32", .{});
+            mod.linkSystemLibrary("user32", .{});
+            mod.linkSystemLibrary("gdi32", .{});
+            mod.linkSystemLibrary("advapi32", .{});
+            mod.linkSystemLibrary("shell32", .{});
+            mod.linkSystemLibrary("shlwapi", .{});
         },
         else => {},
     }

@@ -53,11 +53,26 @@ jobs:
           $dir = (Get-ChildItem -Directory -Filter 'zig-*' | Select-Object -First 1).FullName
           echo $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Install WebView2 SDK (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = '1.0.2903.40'
+          Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$ver/microsoft.web.webview2.$ver.nupkg" -OutFile wv2.nupkg
+          Expand-Archive wv2.nupkg -DestinationPath wv2sdk
+          echo "WEBVIEW2_INCLUDE=$PWD/wv2sdk/build/native/include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Zig version
         run: zig version
 
       - name: Build
-        run: zig build
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            zig build -Dwebview2-sdk="$WEBVIEW2_INCLUDE"
+          else
+            zig build
+          fi
 
       - name: Test
         # The unit tests use /tmp paths and are macOS-centric; run them on
@@ -112,8 +127,23 @@ jobs:
           $dir = (Get-ChildItem -Directory -Filter 'zig-*' | Select-Object -First 1).FullName
           echo $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Install WebView2 SDK (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = '1.0.2903.40'
+          Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$ver/microsoft.web.webview2.$ver.nupkg" -OutFile wv2.nupkg
+          Expand-Archive wv2.nupkg -DestinationPath wv2sdk
+          echo "WEBVIEW2_INCLUDE=$PWD/wv2sdk/build/native/include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build (ReleaseSafe)
-        run: zig build -Doptimize=ReleaseSafe
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            zig build -Doptimize=ReleaseSafe -Dwebview2-sdk="$WEBVIEW2_INCLUDE"
+          else
+            zig build -Doptimize=ReleaseSafe
+          fi
 
       - name: Stage artifact (unix)
         if: runner.os != 'Windows'

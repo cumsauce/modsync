@@ -5,10 +5,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-/// A Threaded Io instance seeded with the real process environment so that
-/// `environString` works (same pattern as config.zig's makeThreaded — the
-/// default InitOptions.environ is `.empty`, which makes environString always
-/// return null).
+/// A Threaded Io instance seeded with the real process environment (used for
+/// file I/O). Env lookups go through `getEnv`, not `Threaded.environString` —
+/// on Windows the latter's pre-scanned struct is empty and won't compile for
+/// arbitrary keys like "HOME".
 fn makeThreaded() std.Io.Threaded {
     if (builtin.target.os.tag == .windows) {
         return std.Io.Threaded.init(std.heap.page_allocator, .{
@@ -22,12 +22,29 @@ fn makeThreaded() std.Io.Threaded {
     });
 }
 
-/// Expand a leading `~` to `$HOME` (config.defaultMinecraftDir returns a
-/// `~`-literal). Any other path is duped as-is. Caller owns.
+/// Portable environment-variable lookup (UTF-8 value, caller owns). Works for
+/// arbitrary keys on every platform (unlike Threaded.environString).
+fn getEnv(allocator: Allocator, key: []const u8) ?[]u8 {
+    const environ: std.process.Environ = if (builtin.target.os.tag == .windows)
+        .{ .block = .global }
+    else blk: {
+        var count: usize = 0;
+        while (std.c.environ[count] != null) : (count += 1) {}
+        break :blk .{ .block = .{ .slice = std.c.environ[0..count :null] } };
+    };
+    return std.process.Environ.getAlloc(environ, allocator, key) catch null;
+}
+
+/// Expand a leading `~` to the user's home directory (config.defaultMinecraftDir
+/// returns a `~`-literal). Any other path is duped as-is. Caller owns.
+///
+/// Home var: POSIX uses `HOME`; Windows uses `USERPROFILE` (Windows does not
+/// define `HOME` by default).
 fn expandHome(allocator: Allocator, path: []const u8) ![]u8 {
     if (path.len == 0 or path[0] != '~') return try allocator.dupe(u8, path);
-    var threaded = makeThreaded();
-    const home = threaded.environString("HOME") orelse return error.NoHomeDirectory;
+    const home_var = if (builtin.target.os.tag == .windows) "USERPROFILE" else "HOME";
+    const home = getEnv(allocator, home_var) orelse return error.NoHomeDirectory;
+    defer allocator.free(home);
     var rest = path[1..];
     if (rest.len > 0 and (rest[0] == '/' or rest[0] == '\\')) rest = rest[1..];
     if (rest.len == 0) return try allocator.dupe(u8, home);

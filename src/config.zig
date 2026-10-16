@@ -40,9 +40,12 @@ pub fn defaultMinecraftDir() []const u8 {
     };
 }
 
-/// A Threaded Io instance seeded with the real process environment so that
-/// `environString` works (the default InitOptions.environ is `.empty`, which
-/// makes environString always return null).
+/// A Threaded Io instance seeded with the real process environment.
+///
+/// Note: `Threaded.environString` is NOT used for arbitrary keys — on Windows
+/// its pre-scanned `Environ.String` struct is empty, so `environString("HOME")`
+/// and `environString("APPDATA")` don't even compile there. We still need a
+/// Threaded for file I/O, so this seeds it; env lookups go through `getEnv`.
 fn makeThreaded() std.Io.Threaded {
     if (builtin.target.os.tag == .windows) {
         return std.Io.Threaded.init(std.heap.page_allocator, .{
@@ -56,16 +59,31 @@ fn makeThreaded() std.Io.Threaded {
     });
 }
 
+/// Portable environment-variable lookup (UTF-8 value, caller owns).
+/// Uses `std.process.Environ.getAlloc`, which branches to the POSIX/Windows
+/// implementation internally — unlike `Threaded.environString`, it works for
+/// arbitrary keys on every platform.
+fn getEnv(allocator: Allocator, key: []const u8) ?[]u8 {
+    const environ: std.process.Environ = if (builtin.target.os.tag == .windows)
+        .{ .block = .global }
+    else blk: {
+        var count: usize = 0;
+        while (std.c.environ[count] != null) : (count += 1) {}
+        break :blk .{ .block = .{ .slice = std.c.environ[0..count :null] } };
+    };
+    return std.process.Environ.getAlloc(environ, allocator, key) catch null;
+}
+
 /// Absolute platform config file path (`~`/`%APPDATA%` expanded). Caller owns.
 pub fn configPath(allocator: Allocator) ![]const u8 {
-    var threaded = makeThreaded();
-
     var buf: [4096]u8 = undefined;
     const path: []const u8 = if (builtin.target.os.tag == .windows) blk: {
-        const appdata = threaded.environString("APPDATA") orelse return error.NoAppDataDirectory;
+        const appdata = getEnv(allocator, "APPDATA") orelse return error.NoAppDataDirectory;
+        defer allocator.free(appdata);
         break :blk try std.fmt.bufPrint(&buf, "{s}\\modsync\\config.json", .{appdata});
     } else blk: {
-        const home = threaded.environString("HOME") orelse return error.NoHomeDirectory;
+        const home = getEnv(allocator, "HOME") orelse return error.NoHomeDirectory;
+        defer allocator.free(home);
         break :blk switch (builtin.target.os.tag) {
             .macos => try std.fmt.bufPrint(&buf, "{s}/Library/Application Support/modsync/config.json", .{home}),
             else => try std.fmt.bufPrint(&buf, "{s}/.config/modsync/config.json", .{home}),
