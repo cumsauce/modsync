@@ -8,9 +8,13 @@ Built with [Zig](https://ziglang.org) + the vendored
 window (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) with no
 bundled browser engine. Single ~1.7 MB binary (macOS, ReleaseSafe).
 
-## Download
+![modsync window](docs/images/modsync.png)
 
-Grab the latest build for your platform from the
+## Install
+
+### Download a release
+
+Grab the asset for your platform from the
 [**Releases page**](../../releases/latest):
 
 | Platform | Asset |
@@ -31,6 +35,25 @@ xattr -d com.apple.quarantine modsync-macos-arm64
 macOS and Linux assets are built and tested in CI. The Windows asset is built
 and linked in CI (MSVC toolchain) but has not been runtime-tested.
 
+### Nix (flake)
+
+Runs on any machine with [Nix](https://nixos.org) — no manual toolchain setup:
+
+```sh
+# Run it directly
+nix run github:cumsauce/modsync
+
+# ...or from a clone
+nix run .
+
+# Development shell (zig 0.17 + GTK/WebKit deps on Linux)
+nix develop
+```
+
+The flake pins `nixos-unstable` on purpose: Zig 0.17 lives there as
+`pkgs.zig_0_17` (the stable branch still ships 0.16, which this project cannot
+build with).
+
 
 ## What it does
 
@@ -48,12 +71,19 @@ and linked in CI (MSVC toolchain) but has not been runtime-tested.
 
 ## Build & run
 
-Requires **Zig 0.17.0** (`brew install zig`).
+Requires **Zig 0.17.0** (`brew install zig`), or use `nix develop` above.
 
 ```sh
 zig build            # -> zig-out/bin/modsync
 zig build test       # runs the unit tests
 zig build run        # builds and launches the app
+```
+
+On Linux you also need the GTK/WebKit dev packages:
+
+```sh
+# Debian/Ubuntu
+sudo apt-get install libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
 Then launch it directly:
