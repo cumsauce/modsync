@@ -24,19 +24,37 @@ Grab the asset for your platform from the
 | Windows (x86_64) | `modsync-windows-x86_64.exe` |
 
 macOS and Linux ship as `.tar.gz` because a release asset carries no POSIX
-permission bits — a bare binary always downloads as non-executable. Extracting
-the archive gives you a `modsync` that runs directly:
+permission bits — a bare binary always downloads as non-executable.
+
+On macOS the archive contains **`modsync.app`**, so it launches as a normal
+application with its own icon and no terminal window:
 
 ```sh
 tar -xzf modsync-macos-arm64.tar.gz
+mv modsync.app /Applications/
+open /Applications/modsync.app
+```
+
+On Linux the archive contains a bare `modsync` binary that runs directly:
+
+```sh
+tar -xzf modsync-linux-x86_64.tar.gz
 ./modsync
 ```
 
-The macOS binary is **unsigned**, so Gatekeeper warns on first launch. Either
-right-click → Open, or clear the quarantine flag once:
+The macOS app is ad-hoc signed but **not notarised**, so Gatekeeper warns on
+first launch. Either right-click → Open, or clear the quarantine flag once:
 
 ```sh
-xattr -d com.apple.quarantine modsync
+xattr -dr com.apple.quarantine /Applications/modsync.app
+```
+
+To build the bundle yourself (icon included):
+
+```sh
+zig build -Doptimize=ReleaseSafe
+bash scripts/make-app.sh zig-out/bin/modsync "$(git describe --tags --abbrev=0 | tr -d v)" dist
+open dist/modsync.app
 ```
 
 macOS and Linux assets are built and tested in CI. The Windows asset is built

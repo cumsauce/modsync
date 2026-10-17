@@ -183,8 +183,19 @@ jobs:
       # permission bits, so a bare binary always downloads as 644 and every
       # user has to chmod +x it. tar stores the mode in its header, so
       # extraction hands back an already-executable file.
-      - name: Stage artifact (unix)
-        if: runner.os != 'Windows'
+      # macOS ships as a .app bundle. A bare Mach-O handed to Finder is opened
+      # by Terminal, which is the shell window users were seeing, and a bundle
+      # is also the only way to carry the icon.
+      - name: Stage artifact (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          bash scripts/make-icon.sh build
+          bash scripts/make-app.sh zig-out/bin/modsync "${GITHUB_REF_NAME#v}" dist
+          tar -czf "${{ matrix.asset }}" -C dist modsync.app
+          tar -tvzf "${{ matrix.asset }}"
+
+      - name: Stage artifact (linux)
+        if: runner.os == 'Linux'
         run: |
           test -x zig-out/bin/modsync
           tar -czf "${{ matrix.asset }}" -C zig-out/bin modsync
@@ -232,16 +243,24 @@ jobs:
           - Linux (x86_64): modsync-linux-x86_64.tar.gz
           - Windows (x86_64): modsync-windows-x86_64.exe
 
-          macOS / Linux: extract and run. The binary inside the archive is
-          already executable -- no chmod needed.
+          macOS / Linux: extract and run.
+
+          macOS ships as modsync.app, so it launches as a normal application
+          with its own Dock icon -- no terminal window:
 
               tar -xzf modsync-macos-arm64.tar.gz
+              mv modsync.app /Applications/
+              open /Applications/modsync.app
+
+          Linux ships a bare binary that is already executable:
+
+              tar -xzf modsync-linux-x86_64.tar.gz
               ./modsync
 
-          macOS note: the binary is unsigned, so Gatekeeper will warn on first
-          launch. Either right-click it and choose Open, or clear the quarantine
-          flag once:
+          macOS note: the app is ad-hoc signed but not notarised, so Gatekeeper
+          will warn on first launch. Either right-click it and choose Open, or
+          clear the quarantine flag once:
 
-              xattr -d com.apple.quarantine modsync
+              xattr -dr com.apple.quarantine /Applications/modsync.app
 
           Linux/Windows assets are built and linked in CI but not runtime-tested."
