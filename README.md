@@ -8,8 +8,10 @@ Built with [Zig](https://ziglang.org) + the vendored
 window (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) with no
 bundled browser engine. Single ~1.7 MB binary (macOS, ReleaseSafe).
 
-v0.7.0 ships the **Arctic Cyan** theme: a dark, single-column window with a cyan
-accent, status-coloured rows, and an inline ⋯ menu per tracked repo.
+**v0.7.3** ships the **Arctic Cyan** theme: a dark, single-column window with a cyan
+accent, status-coloured rows, and an inline ⋯ menu per tracked repo. Row icons
+are read from the installed jar (the same artwork Minecraft shows), the window
+is resizable, and the titlebar can be dragged.
 
 ![modsync window](docs/images/modsync.png)
 
@@ -97,8 +99,12 @@ build with).
 - Updates run one repo at a time and each row reports its stage: Checking →
   Downloading → Installing → Success/Error.
 - Seed repos: `cumsauce/gore`, `cumsauce/foley`, `cumsauce/earshot`,
-  `cumsauce/stalker`, `cumsauce/aorta`, `desocketed/yakvc` — configurable via
-  `defaults.json` (see Config below), and you can add or remove any repo.
+  `cumsauce/stalker`, `cumsauce/aorta`, `cumsauce/doorswing`,
+  `desocketed/yakvc` — configurable via `defaults.json` (see Config below), and
+  you can add or remove any repo.
+- Row icons come from the installed jar (the artwork Minecraft shows); when a
+  mod isn't installed or its jar has no icon, the row falls back to the repo
+  name's first letter.
 - Prereleases count (foley/earshot/yakvc are prerelease-only), so "newest" means
   the first non-draft release on the `releases?per_page=100` list.
 
@@ -128,11 +134,13 @@ Then launch it directly:
 ## Using the app
 
 - **Detected launchers** — modsync finds Prism Launcher and Modrinth App installs
-  automatically (macOS, Linux, Windows) and lists their instances/profiles. Hit
-  **Use** on one to make it the managed game directory. Only `<profile>/mods/`
+  automatically (macOS, Linux, Windows) and lists their instances/profiles. Pick
+  one to make it the managed game directory. Only `<profile>/mods/`
   is ever touched; launcher metadata is never written.
 - **Minecraft folder** — type the path and press **Save** (manual alternative to
   picking a profile).
+- **Window** — the layout is fluid, so widening the window stretches the list and
+  controls to fill it. Drag the top strip to move the window.
 - **Update all** — fetches each tracked repo's newest release and installs it
   through a staged pipeline: Checking → Downloading → Installing →
   Success/Error, reported on each row. The button reads **Updating…** and is
