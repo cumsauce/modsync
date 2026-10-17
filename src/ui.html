@@ -46,8 +46,6 @@ window.renderState = function (state) {
   --ok-tint: rgba(74,222,128,0.12);
   --err: #FB7185;
   --err-tint: rgba(251,113,133,0.12);
-  --info: #8273D8;
-  --info-tint: rgba(110,86,207,0.14);
   --mute-tint: rgba(167,159,188,0.10);
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -68,7 +66,6 @@ button { user-select: none; -webkit-user-select: none; }
 
 /* flush sections, full-bleed hairline dividers (Uber) */
 .section { padding: 8px 16px 10px; }
-.section + .section { border-top: 1px solid var(--divider); }
 .section-head {
   display: flex;
   align-items: center;
@@ -120,14 +117,19 @@ button { user-select: none; -webkit-user-select: none; }
 
 /* Active-install selector: the app's context. Sticky so it stays the anchor
    while the list scrolls, and glowing so it reads as the live selection. */
-.context-bar {
+/* Sticky chrome: the title bar and the selector travel together, so the
+   traffic-light spacer stays in place once the page scrolls. Sticking the
+   selector alone would slide it under the native window buttons. */
+.chrome {
   position: sticky;
   top: 0;
   z-index: 20;
-  padding: 8px 16px 9px;
   background: rgba(11,10,16,0.92);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
+}
+.context-bar {
+  padding: 7px 16px 8px;
   border-bottom: 1px solid var(--divider);
 }
 .install-picker {
@@ -143,16 +145,16 @@ button { user-select: none; -webkit-user-select: none; }
   font: inherit;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 0 18px rgba(110,86,207,0.16);
+  box-shadow: 0 0 12px rgba(110,86,207,0.10);
   transition: box-shadow .18s ease, border-color .18s ease;
 }
 .install-picker:hover {
   border-color: rgba(130,115,216,0.7);
-  box-shadow: 0 0 24px rgba(110,86,207,0.30);
+  box-shadow: 0 0 16px rgba(110,86,207,0.18);
 }
 .install-picker[aria-expanded="true"] {
   border-color: var(--primary-hover);
-  box-shadow: 0 0 0 1px rgba(130,115,216,0.5), 0 0 30px rgba(110,86,207,0.38);
+  box-shadow: 0 0 0 1px rgba(130,115,216,0.45), 0 0 18px rgba(110,86,207,0.20);
 }
 .install-glyph {
   flex: none;
@@ -193,14 +195,21 @@ button { user-select: none; -webkit-user-select: none; }
   border-radius: 8px;
   background: #12101A;
   box-shadow: 0 18px 40px rgba(0,0,0,0.55);
-  max-height: 300px;
+}
+.install-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* Only the options scroll: the custom-path field and Rescan are the
+     fallback when detection fails, so they must never be scrolled out of
+     reach inside the dropdown. */
+  max-height: 220px;
   overflow-y: auto;
 }
-.install-list { list-style: none; margin: 0; padding: 0; }
 .install-option {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 7px 8px;
   border: none;
@@ -211,7 +220,12 @@ button { user-select: none; -webkit-user-select: none; }
   cursor: pointer;
 }
 .install-option:hover { background: var(--hover); }
-.install-option.selected { background: rgba(110,86,207,0.16); }
+.install-option.selected {
+  background: rgba(110,86,207,0.18);
+  box-shadow: inset 0 0 0 1px rgba(130,115,216,0.35);
+}
+.opt-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.opt-check { flex: none; color: var(--primary-hover); font: 600 12px/1 var(--sans); }
 .opt-name {
   font: 500 13px/1.35 var(--sans);
   white-space: nowrap;
@@ -311,15 +325,12 @@ button { user-select: none; -webkit-user-select: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.group-head:not(:first-child) { border-top: 1px solid var(--divider); }
+.group-head.sep { border-top: 1px solid var(--divider); }
 .group-head b { font-weight: 600; color: var(--dim); }
 .item {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
   margin: 0 -16px;
   padding: 4px 16px;
-  border-radius: 0;
   transition: background-color .1s linear;
 }
 .item:hover { background: var(--hover); }
@@ -333,7 +344,6 @@ button { user-select: none; -webkit-user-select: none; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 40%;
   min-width: 0;
   padding: 2px 8px;
   border-radius: 999px;
@@ -474,6 +484,7 @@ button { user-select: none; -webkit-user-select: none; }
 </head>
 <body>
 <main>
+  <div class="chrome">
   <header class="topbar">
     <span class="side-spacer" aria-hidden="true"></span>
     <h1 class="wordmark">modsync</h1>
@@ -482,7 +493,7 @@ button { user-select: none; -webkit-user-select: none; }
 
   <div class="context-bar">
     <button type="button" id="install-toggle" class="install-picker"
-            aria-haspopup="true" aria-expanded="false" aria-controls="install-menu">
+            aria-expanded="false" aria-controls="install-menu">
       <span class="install-glyph" aria-hidden="true"></span>
       <span class="install-body">
         <span class="install-label">Minecraft install</span>
@@ -504,6 +515,7 @@ button { user-select: none; -webkit-user-select: none; }
         <button type="button" class="btn btn-ghost js-rescan">Rescan</button>
       </div>
     </div>
+  </div>
   </div>
 
   <section class="section">
@@ -735,9 +747,10 @@ button { user-select: none; -webkit-user-select: none; }
       colsHead.appendChild(headGrid);
       list.appendChild(colsHead);
     }
+    let groupIndex = 0;
     for (const [owner, items] of groups) {
       const head = document.createElement("li");
-      head.className = "group-head";
+      head.className = groupIndex++ > 0 ? "group-head sep" : "group-head";
       const ownerLabel = document.createElement("b");
       ownerLabel.textContent = owner;
       const count = document.createElement("span");
@@ -751,7 +764,6 @@ button { user-select: none; -webkit-user-select: none; }
       }
     }
     empty.hidden = repos.length > 0;
-    list.classList.toggle("dense", repos.length > 5);
     if (repos.length > 0) {
       summaryEl.hidden = false;
       summaryEl.textContent = installed + " of " + repos.length + " installed";
@@ -763,6 +775,14 @@ button { user-select: none; -webkit-user-select: none; }
 
   // Detected installs are the options inside the top selector, so there is no
   // separate launcher list any more: this drives the dropdown directly.
+  // The instance name is what distinguishes two installs: the full path is
+  // long, identical for its first sixty characters, and is truncated first.
+  function profilePath(p) {
+    const dir = String(p.gameDir || "");
+    const m = dir.match(/\/(?:instances|profiles)\/(.+)$/);
+    return m ? m[1] : prettyPath(dir);
+  }
+
   function renderLaunchers(payload) {
     installList.textContent = "";
     lastLaunchers = payload;
@@ -777,29 +797,42 @@ button { user-select: none; -webkit-user-select: none; }
     }
 
     for (const p of profiles) {
+      const selected = p.gameDir === currentGameDir;
       const li = document.createElement("li");
 
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "install-option" + (p.gameDir === currentGameDir ? " selected" : "");
+      btn.className = "install-option" + (selected ? " selected" : "");
       btn.title = String(p.gameDir || "");
+      if (selected) btn.setAttribute("aria-current", "true");
 
+      const text = document.createElement("span");
+      text.className = "opt-text";
       const name = document.createElement("span");
       name.className = "opt-name";
       name.textContent = String(p.name || "Untitled");
       const path = document.createElement("span");
       path.className = "opt-path";
-      path.textContent = (p.kind === "prism" ? "Prism · " : "Modrinth · ") + String(p.gameDir || "");
-      btn.append(name, path);
+      path.textContent = (p.kind === "prism" ? "Prism · " : "Modrinth · ") + profilePath(p);
+      text.append(name, path);
+      btn.appendChild(text);
+
+      if (selected) {
+        const check = document.createElement("span");
+        check.className = "opt-check";
+        check.setAttribute("aria-hidden", "true");
+        check.textContent = "✓";
+        btn.appendChild(check);
+      }
 
       btn.addEventListener("click", async () => {
         let ok = false;
         try { ok = asBool(await call("selectProfile", p.gameDir)); } catch (e) {}
-        if (ok) {
-          setMenuOpen(false);
-          await load();           // re-read the path for the selector label
-          await loadLaunchers();  // re-mark the selected option
-        }
+        if (!ok) return;
+        setMenuOpen(false);
+        installToggle.focus();  // this option is removed by the re-render
+        await load();           // re-read the path for the selector label
+        await loadLaunchers();  // re-mark the selected option
       });
 
       li.appendChild(btn);
@@ -868,6 +901,10 @@ button { user-select: none; -webkit-user-select: none; }
       try { payload = JSON.parse(payload); } catch (e) { payload = null; }
     }
     if (!payload || typeof payload !== "object") {
+      // Stale options must not stay clickable: selecting one would point the
+      // app at a path detection could not confirm.
+      installList.textContent = "";
+      lastLaunchers = null;
       installEmpty.hidden = false;
       installEmpty.textContent = "Couldn't read launcher profiles.";
       return;
@@ -880,6 +917,20 @@ button { user-select: none; -webkit-user-select: none; }
   });
 
   installToggle.addEventListener("click", () => setMenuOpen(installMenu.hidden));
+  // Arrow keys walk the options; otherwise the menu is Tab-only.
+  installMenu.addEventListener("keydown", (e) => {
+    const key = e.key;
+    if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return;
+    const opts = Array.from(installList.querySelectorAll(".install-option"));
+    if (!opts.length) return;
+    const i = opts.indexOf(document.activeElement);
+    let next = 0;
+    if (key === "End") next = opts.length - 1;
+    else if (key === "ArrowUp") next = i < 0 ? opts.length - 1 : Math.max(i - 1, 0);
+    else if (key === "ArrowDown") next = i < 0 ? 0 : Math.min(i + 1, opts.length - 1);
+    e.preventDefault();
+    opts[next].focus();
+  });
   // Click-away closes the menu; the toggle's own click is excluded so the
   // bubbled event doesn't immediately re-close what it just opened.
   document.addEventListener("click", (e) => {
@@ -903,8 +954,10 @@ button { user-select: none; -webkit-user-select: none; }
     if (!restoreConfirm.hidden) {
       restoreConfirm.hidden = true;
       $("restore").focus();
+      return;
     }
-    if (!installMenu.hidden) {
+    // Escape inside the path field must not throw away a half-typed path.
+    if (!installMenu.hidden && e.target !== folder) {
       setMenuOpen(false);
       installToggle.focus();
     }
