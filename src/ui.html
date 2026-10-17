@@ -18,7 +18,7 @@ window.renderState = function (state) {
 </script>
 <style>
 :root {
-  --bg: #100E18;
+  --bg: #000000;
   --surface: #1B1828;
   --surface-2: #232032;
   --border: #302A42;
@@ -42,7 +42,7 @@ window.renderState = function (state) {
 html, body { max-width: 100%; }
 body {
   margin: 0;
-  padding: 16px 16px 24px;
+  padding: 0;
   overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
@@ -52,27 +52,33 @@ body {
 .wordmark {
   font: 700 20px/1.2 var(--sans);
   color: var(--fuchsia);
-  letter-spacing: -0.01em;
-  margin: 0 0 16px;
+  letter-spacing: -0.02em;
+  margin: 0;
+  padding: 12px 16px 0;
 }
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-top-color: var(--hairline);
-  border-radius: 8px;
+/* Sections are flush with the page: no card chrome at all — no margin,
+   no radius, no border, no background. Structure comes only from the
+   full-bleed hairline divider between sections. */
+.section {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
   padding: 16px;
-  margin: 0 0 16px;
 }
-.card:last-child { margin-bottom: 0; }
-.card-head {
+.section + .section {
+  border-top: 1px solid var(--hairline);
+}
+.section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
-.card-head h2 {
-  font: 600 16px/1.3 var(--sans);
+.section-head h2 {
+  font: 600 16px/1.25 var(--sans);
+  letter-spacing: -0.01em;
   color: var(--text);
   margin: 0;
   text-transform: none;
@@ -107,15 +113,15 @@ body {
 /* ---- labels + inputs ---- */
 .label {
   display: block;
-  font: 14px/1.5 var(--sans);
+  font: 14px/1.4 var(--sans);
   color: var(--text);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .input-row { display: flex; align-items: center; gap: 8px; }
 .input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 36px;
+  height: 32px;
   padding: 0 12px;
   border-radius: 6px;
   background: var(--surface-2);
@@ -151,11 +157,13 @@ body {
 .item {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px 0;
+  gap: 8px;
+  /* Negative side margins pull each row out to the window edges so its
+     divider runs full-bleed; the padding keeps content inset 16px. */
+  margin: 0 -16px;
+  padding: 10px 16px;
 }
 .item + .item { border-top: 1px solid var(--divider); }
-.list.dense .item + .item { border-top-color: var(--hairline); }
 .row-l1 {
   display: flex;
   align-items: center;
@@ -176,7 +184,7 @@ body {
   flex-shrink: 0;
 }
 .name {
-  font: 14px/1.5 var(--sans);
+  font: 500 14px/1.5 var(--sans);
   color: var(--text);
   min-width: 0;
   white-space: nowrap;
@@ -238,16 +246,23 @@ body {
 .chip-mute { color: var(--text-2); }
 
 /* ---- empty states ---- */
+.empty-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
 .empty-title {
   font: 600 14px/1.5 var(--sans);
   color: var(--text);
   margin: 0 0 8px;
 }
+.empty-head .empty-title { margin: 0; }
 .empty-body {
   font: 14px/1.5 var(--sans);
   color: var(--text-2);
   margin: 0 0 12px;
-  max-width: 64ch;
 }
 .empty > :last-child { margin-bottom: 0; }
 
@@ -264,35 +279,8 @@ body {
 <main>
   <h1 class="wordmark">modsync</h1>
 
-  <section class="card">
-    <div class="card-head">
-      <h2>Detected launchers</h2>
-      <button type="button" id="rescan" class="btn btn-ghost js-rescan" hidden>Rescan</button>
-    </div>
-    <ul id="launchers" class="list"></ul>
-    <div id="launchers-empty" class="empty">
-      <p class="empty-title" id="launchers-empty-title">Not scanned yet</p>
-      <p class="empty-body" id="launchers-empty-body">Click Rescan to look for installed Prism and Modrinth profiles.</p>
-      <button type="button" class="btn btn-ghost js-rescan">Rescan</button>
-    </div>
-    <div id="launchers-errors" class="msg"></div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
-      <h2>Minecraft folder</h2>
-    </div>
-    <label class="label" for="folder">Folder path</label>
-    <div class="input-row">
-      <input id="folder" class="input mono" type="text" placeholder="e.g. ~/.minecraft"
-             spellcheck="false" autocomplete="off">
-      <button type="button" id="save" class="btn btn-outline">Save</button>
-    </div>
-    <div id="folder-msg" class="msg"></div>
-  </section>
-
-  <section class="card">
-    <div class="card-head">
+  <section class="section">
+    <div class="section-head">
       <h2>Tracked mods</h2>
       <div class="head-actions">
         <button type="button" id="restore" class="btn btn-ghost">Restore defaults</button>
@@ -307,8 +295,37 @@ body {
     <div id="restore-msg" class="msg"></div>
   </section>
 
-  <section class="card">
-    <div class="card-head">
+  <section class="section">
+    <div class="section-head">
+      <h2>Detected launchers</h2>
+      <button type="button" id="rescan" class="btn btn-ghost js-rescan" hidden>Rescan</button>
+    </div>
+    <ul id="launchers" class="list"></ul>
+    <div id="launchers-empty" class="empty">
+      <div class="empty-head">
+        <p class="empty-title" id="launchers-empty-title">Not scanned yet</p>
+        <button type="button" class="btn btn-ghost js-rescan">Rescan</button>
+      </div>
+      <p class="empty-body" id="launchers-empty-body">Click Rescan to look for installed Prism and Modrinth profiles.</p>
+    </div>
+    <div id="launchers-errors" class="msg"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Minecraft folder</h2>
+    </div>
+    <label class="label" for="folder">Folder path</label>
+    <div class="input-row">
+      <input id="folder" class="input mono" type="text" placeholder="e.g. ~/.minecraft"
+             spellcheck="false" autocomplete="off">
+      <button type="button" id="save" class="btn btn-outline">Save</button>
+    </div>
+    <div id="folder-msg" class="msg"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
       <h2>Add a repo</h2>
     </div>
     <label class="label" for="new-repo">Repository</label>
