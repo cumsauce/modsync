@@ -118,6 +118,124 @@ button { user-select: none; -webkit-user-select: none; }
   color: var(--dim);
 }
 
+/* Active-install selector: the app's context. Sticky so it stays the anchor
+   while the list scrolls, and glowing so it reads as the live selection. */
+.context-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 8px 16px 9px;
+  background: rgba(11,10,16,0.92);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--divider);
+}
+.install-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid rgba(110,86,207,0.42);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(110,86,207,0.14), rgba(110,86,207,0.05));
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 0 18px rgba(110,86,207,0.16);
+  transition: box-shadow .18s ease, border-color .18s ease;
+}
+.install-picker:hover {
+  border-color: rgba(130,115,216,0.7);
+  box-shadow: 0 0 24px rgba(110,86,207,0.30);
+}
+.install-picker[aria-expanded="true"] {
+  border-color: var(--primary-hover);
+  box-shadow: 0 0 0 1px rgba(130,115,216,0.5), 0 0 30px rgba(110,86,207,0.38);
+}
+.install-glyph {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(140deg, #8273D8, #5B45B8);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.28);
+}
+.install-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.install-label { font: 500 10px/1.3 var(--sans); color: var(--faint); }
+.install-value {
+  font: 600 13px/1.35 var(--sans);
+  color: var(--text);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--dim);
+  transition: transform .16s ease;
+}
+.install-picker[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+.install-menu {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 100%;
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #12101A;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+  max-height: 300px;
+  overflow-y: auto;
+}
+.install-list { list-style: none; margin: 0; padding: 0; }
+.install-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.install-option:hover { background: var(--hover); }
+.install-option.selected { background: rgba(110,86,207,0.16); }
+.opt-name {
+  font: 500 13px/1.35 var(--sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.opt-path {
+  font: 10.5px/1.35 var(--mono);
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.install-empty { margin: 6px 8px; font: 12px/1.4 var(--sans); color: var(--faint); }
+.install-custom-label {
+  margin: 8px 8px 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+  font: 500 10.5px/1.3 var(--sans);
+  color: var(--faint);
+}
+.install-menu .inline-add { margin-top: 0; }
+.install-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+
 /* buttons: tiered by style, uniform size; slightly rounded (Discord) */
 .btn {
   height: 26px;
@@ -145,13 +263,6 @@ button { user-select: none; -webkit-user-select: none; }
 .btn:disabled { cursor: default; opacity: .55; }
 
 /* inputs */
-.label {
-  display: block;
-  font: 500 11px/1.3 var(--sans);
-  color: var(--faint);
-  margin-bottom: 4px;
-}
-.input-row { display: flex; align-items: center; gap: 8px; }
 .input {
   flex: 1 1 auto;
   min-width: 0;
@@ -212,45 +323,12 @@ button { user-select: none; -webkit-user-select: none; }
   transition: background-color .1s linear;
 }
 .item:hover { background: var(--hover); }
-/* the selected launcher must still respond to hover: .item.launched comes
-   later in the sheet and would otherwise win at equal specificity. */
-.item.launched:hover { background: rgba(110,86,207,0.14); }
 /* per-row Remove is destructive and repetitive: keep it out of the way until
    the row is hovered or focused, so the data columns stay scannable. */
 .item .btn-danger { opacity: 0; }
 .item:hover .btn-danger,
 .item:focus-within .btn-danger { opacity: 1; }
 @media (hover: none) { .item .btn-danger { opacity: 1; } }
-.item.launched {
-  box-shadow: inset 3px 0 0 var(--primary-hover);
-  background: rgba(110,86,207,0.08);
-}
-.row-l1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.row-id { display: flex; align-items: baseline; gap: 4px; flex: 1 1 auto; min-width: 0; }
-.owner {
-  font: 11.5px/1.4 var(--mono);
-  color: var(--faint);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.name {
-  font: 500 13.5px/1.4 var(--sans);
-  color: var(--text);
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.row-l2 { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.meta {
-  font: 11.5px/1.4 var(--mono);
-  color: var(--faint);
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.meta.grow { flex: 1 1 auto; }
 .chip {
   display: inline-flex;
   align-items: center;
@@ -273,13 +351,10 @@ button { user-select: none; -webkit-user-select: none; }
   flex-shrink: 0;
 }
 .chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.chip-ok { color: #3FB97F; background: rgba(63,185,127,0.12); }
-.chip-info { color: var(--info); background: var(--info-tint); }
 
-/* rows compress when the list is long */
-
-/* add-repo sits inline under the list, not in a section at the bottom of a
-   window that already scrolls — the action stays next to what it affects. */
+/* add-repo sits inline under the list rather than in a section at the bottom
+   of a window that already scrolls — the action stays next to what it acts
+   on. */
 .inline-add { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 
 /* empty states — quiet, actionable */
@@ -405,6 +480,32 @@ button { user-select: none; -webkit-user-select: none; }
     <span class="side-spacer" aria-hidden="true"></span>
   </header>
 
+  <div class="context-bar">
+    <button type="button" id="install-toggle" class="install-picker"
+            aria-haspopup="true" aria-expanded="false" aria-controls="install-menu">
+      <span class="install-glyph" aria-hidden="true"></span>
+      <span class="install-body">
+        <span class="install-label">Minecraft install</span>
+        <span class="install-value" id="install-value">Not set</span>
+      </span>
+      <span class="chevron" aria-hidden="true"></span>
+    </button>
+    <div class="install-menu" id="install-menu" hidden>
+      <ul id="install-list" class="install-list"></ul>
+      <p class="install-empty" id="install-empty" hidden></p>
+      <p class="install-custom-label">Or use a folder path</p>
+      <div class="inline-add">
+        <input id="folder" class="input mono" type="text" placeholder="e.g. ~/.minecraft"
+               aria-label="Minecraft folder path" spellcheck="false" autocomplete="off">
+        <button type="button" id="save" class="btn btn-outline">Save</button>
+      </div>
+      <div id="folder-msg" class="msg"></div>
+      <div class="install-foot">
+        <button type="button" class="btn btn-ghost js-rescan">Rescan</button>
+      </div>
+    </div>
+  </div>
+
   <section class="section">
     <div class="section-head">
       <div class="head-title">
@@ -438,29 +539,6 @@ button { user-select: none; -webkit-user-select: none; }
     <div id="restore-msg" class="msg"></div>
   </section>
 
-  <section class="section">
-    <div class="section-head">
-      <h2>Detected launchers</h2>
-      <button type="button" id="rescan" class="btn btn-ghost js-rescan">Rescan</button>
-    </div>
-    <ul id="launchers" class="list"></ul>
-    <div id="launchers-empty" class="empty">
-      <p class="empty-title" id="launchers-empty-title">Not scanned yet</p>
-      <p class="empty-body" id="launchers-empty-body">Look for installed Prism and Modrinth profiles.</p>
-    </div>
-    <div id="launchers-errors" class="msg"></div>
-  </section>
-
-  <section class="section">
-    <div class="section-head"><h2>Minecraft folder</h2></div>
-    <label class="label" for="folder">Folder path</label>
-    <div class="input-row">
-      <input id="folder" class="input mono" type="text" placeholder="e.g. ~/.minecraft"
-             spellcheck="false" autocomplete="off">
-      <button type="button" id="save" class="btn btn-outline">Save</button>
-    </div>
-    <div id="folder-msg" class="msg"></div>
-  </section>
 </main>
 <script>
 "use strict";
@@ -474,11 +552,11 @@ button { user-select: none; -webkit-user-select: none; }
   const refreshBtn = $("refresh");
   const newRepo = $("new-repo"), addMsg = $("add-msg");
   const restoreMsg = $("restore-msg");
-  const launchersList = $("launchers");
-  const launchersEmpty = $("launchers-empty");
-  const launchersEmptyTitle = $("launchers-empty-title");
-  const launchersEmptyBody = $("launchers-empty-body");
-  const launchersErrors = $("launchers-errors");
+  const installToggle = $("install-toggle");
+  const installMenu = $("install-menu");
+  const installList = $("install-list");
+  const installEmpty = $("install-empty");
+  const installValue = $("install-value");
   const progressEl = $("progress");
   const restoreConfirm = $("restore-confirm");
   const listMsg = $("list-msg");
@@ -683,85 +761,76 @@ button { user-select: none; -webkit-user-select: none; }
     }
   }
 
+  // Detected installs are the options inside the top selector, so there is no
+  // separate launcher list any more: this drives the dropdown directly.
   function renderLaunchers(payload) {
-    launchersList.textContent = "";
+    installList.textContent = "";
     lastLaunchers = payload;
     const profiles = (payload && Array.isArray(payload.profiles)) ? payload.profiles : [];
     const errors = (payload && Array.isArray(payload.errors)) ? payload.errors : [];
-    const none = profiles.length === 0;
 
-    launchersEmpty.hidden = !none;
-    if (none) {
-      launchersEmptyTitle.textContent = "No launcher profiles found";
-      launchersEmptyBody.textContent =
-        "Prism or Modrinth doesn't appear to be installed, or no profiles exist yet.";
-    } else {
-      for (const p of profiles) {
-        const selected = p.gameDir === currentGameDir;
-
-        const li = document.createElement("li");
-        li.className = selected ? "item launched" : "item";
-
-        const line1 = document.createElement("div");
-        line1.className = "row-l1";
-
-        const idBox = document.createElement("div");
-        idBox.className = "row-id";
-        const kind = document.createElement("span");
-        kind.className = "owner";
-        kind.textContent = p.kind === "prism" ? "prism/" : "modrinth/";
-        const name = document.createElement("span");
-        name.className = "name";
-        name.textContent = String(p.name || "");
-        name.title = p.gameDir ? String(p.name || "") + " — " + p.gameDir : String(p.name || "");
-        idBox.append(kind, name);
-
-        const use = document.createElement("button");
-        use.type = "button";
-        use.className = "btn btn-outline";
-        use.textContent = "Use";
-        use.title = "Use " + String(p.name || "this profile");
-        use.addEventListener("click", async () => {
-          let ok = false;
-          try { ok = asBool(await call("selectProfile", p.gameDir)); } catch (e) {}
-          if (ok) await load();  // re-fetch state; __applyState re-renders rows
-        });
-        line1.append(idBox, use);
-
-        const line2 = document.createElement("div");
-        line2.className = "row-l2";
-        const kindMeta = document.createElement("span");
-        kindMeta.className = "meta";
-        kindMeta.textContent = p.kind === "prism" ? "Prism Launcher" : "Modrinth App";
-        line2.append(kindMeta);
-        if (p.gameDir) {
-          const path = document.createElement("span");
-          path.className = "meta grow";
-          path.textContent = p.gameDir;
-          path.title = p.gameDir;
-          line2.append(path);
-        }
-        if (selected) {
-          const chip = document.createElement("span");
-          chip.className = "chip chip-ok";
-          chip.title = "In use";
-          const dot = document.createElement("span");
-          dot.className = "dot";
-          const label = document.createElement("span");
-          label.className = "chip-text";
-          label.textContent = "in use";
-          chip.append(dot, label);
-          line2.append(chip);
-        }
-
-        li.append(line1, line2);
-        launchersList.appendChild(li);
-      }
+    installEmpty.hidden = profiles.length > 0;
+    if (profiles.length === 0) {
+      installEmpty.textContent = errors.length
+        ? "Couldn't read: " + errors.join(", ")
+        : "No Prism or Modrinth profiles found.";
     }
 
-    showMsg(launchersErrors, errors.length ? "Couldn't read: " + errors.join(", ") : "",
-      errors.length ? "err" : "");
-    launchersList.classList.toggle("dense", profiles.length > 5);
+    for (const p of profiles) {
+      const li = document.createElement("li");
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "install-option" + (p.gameDir === currentGameDir ? " selected" : "");
+      btn.title = String(p.gameDir || "");
+
+      const name = document.createElement("span");
+      name.className = "opt-name";
+      name.textContent = String(p.name || "Untitled");
+      const path = document.createElement("span");
+      path.className = "opt-path";
+      path.textContent = (p.kind === "prism" ? "Prism · " : "Modrinth · ") + String(p.gameDir || "");
+      btn.append(name, path);
+
+      btn.addEventListener("click", async () => {
+        let ok = false;
+        try { ok = asBool(await call("selectProfile", p.gameDir)); } catch (e) {}
+        if (ok) {
+          setMenuOpen(false);
+          await load();           // re-read the path for the selector label
+          await loadLaunchers();  // re-mark the selected option
+        }
+      });
+
+      li.appendChild(btn);
+      installList.appendChild(li);
+    }
+
+    updateInstallValue();
+  }
+
+  // Collapse the user's home prefix so paths read as "~/Library/..." rather
+  // than a raw absolute path.
+  function prettyPath(dir) {
+    return String(dir || "").replace(/^\/(?:Users|home)\/[^/]+/, "~");
+  }
+
+  function updateInstallValue() {
+    const dir = currentGameDir;
+    if (!dir) {
+      installValue.textContent = "Not set";
+      installToggle.title = "Choose the Minecraft install modsync manages";
+      return;
+    }
+    const profiles = (lastLaunchers && Array.isArray(lastLaunchers.profiles)) ? lastLaunchers.profiles : [];
+    const hit = profiles.find((p) => p.gameDir === dir);
+    installValue.textContent = hit ? String(hit.name || dir) : prettyPath(dir);
+    installToggle.title = dir;
+  }
+
+  function setMenuOpen(open) {
+    installMenu.hidden = !open;
+    installToggle.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
   // Single entry point for state: getConfig on load, renderState pushes during
@@ -774,7 +843,8 @@ button { user-select: none; -webkit-user-select: none; }
     if (document.activeElement !== folder) folder.value = state.minecraftDir || "";
     currentGameDir = state.minecraftDir || "";
     renderList(Array.isArray(state.repos) ? state.repos : []);
-    if (lastLaunchers) renderLaunchers(lastLaunchers);  // refresh "in use" chip
+    if (lastLaunchers) renderLaunchers(lastLaunchers);  // re-mark the selected option
+    updateInstallValue();
     setRefreshing(false);
   };
 
@@ -798,8 +868,8 @@ button { user-select: none; -webkit-user-select: none; }
       try { payload = JSON.parse(payload); } catch (e) { payload = null; }
     }
     if (!payload || typeof payload !== "object") {
-      // Keep the "Not scanned yet" copy; just report that the read failed.
-      showMsg(launchersErrors, "Couldn't read launcher profiles.", "err");
+      installEmpty.hidden = false;
+      installEmpty.textContent = "Couldn't read launcher profiles.";
       return;
     }
     renderLaunchers(payload);
@@ -807,6 +877,17 @@ button { user-select: none; -webkit-user-select: none; }
 
   document.querySelectorAll(".js-rescan").forEach((btn) => {
     btn.addEventListener("click", () => loadLaunchers());
+  });
+
+  installToggle.addEventListener("click", () => setMenuOpen(installMenu.hidden));
+  // Click-away closes the menu; the toggle's own click is excluded so the
+  // bubbled event doesn't immediately re-close what it just opened.
+  document.addEventListener("click", (e) => {
+    if (!installMenu.hidden &&
+        !installMenu.contains(e.target) &&
+        !installToggle.contains(e.target)) {
+      setMenuOpen(false);
+    }
   });
 
   $("restore").addEventListener("click", () => {
@@ -818,9 +899,14 @@ button { user-select: none; -webkit-user-select: none; }
     $("restore").focus();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !restoreConfirm.hidden) {
+    if (e.key !== "Escape") return;
+    if (!restoreConfirm.hidden) {
       restoreConfirm.hidden = true;
       $("restore").focus();
+    }
+    if (!installMenu.hidden) {
+      setMenuOpen(false);
+      installToggle.focus();
     }
   });
   $("restore-yes").addEventListener("click", async () => {
@@ -842,8 +928,8 @@ button { user-select: none; -webkit-user-select: none; }
     let ok = false;
     try { ok = asBool(await call("setMinecraftDir", folder.value)); } catch (e) {}
     if (ok) {
-      showMsg(folderMsg, "Saved.", "ok");
-      setTimeout(() => { showMsg(folderMsg, "", ""); }, 2000);
+      setMenuOpen(false);
+      await load();  // re-read the path and refresh the selector label
     } else {
       showMsg(folderMsg, "Couldn't save folder.", "err");
     }
