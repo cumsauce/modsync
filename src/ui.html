@@ -83,6 +83,9 @@ button { user-select: none; -webkit-user-select: none; }
   margin: 0;
 }
 .head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+/* fixed width so the label swapping to "Refreshing…" doesn't shift the
+   adjacent button out from under the pointer. */
+#refresh { min-width: 98px; }
 .head-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .summary {
   font: 11.5px/1.4 var(--mono);
@@ -91,7 +94,6 @@ button { user-select: none; -webkit-user-select: none; }
   white-space: nowrap;
 }
 .summary[hidden] { display: none; }
-.summary b { font-weight: 400; color: var(--ok); }
 
 /* integrated title bar: the UI's own top strip (the native bar is
    transparent and textless; traffic lights overlay the left spacer).
@@ -169,7 +171,6 @@ button { user-select: none; -webkit-user-select: none; }
 .input:focus {
   border-color: var(--primary-hover);
   box-shadow: 0 0 0 3px rgba(130,115,216,0.25);
-  outline: none;
 }
 
 /* messages */
@@ -211,6 +212,9 @@ button { user-select: none; -webkit-user-select: none; }
   transition: background-color .1s linear;
 }
 .item:hover { background: var(--hover); }
+/* the selected launcher must still respond to hover: .item.launched comes
+   later in the sheet and would otherwise win at equal specificity. */
+.item.launched:hover { background: rgba(110,86,207,0.14); }
 /* per-row Remove is destructive and repetitive: keep it out of the way until
    the row is hovered or focused, so the data columns stay scannable. */
 .item .btn-danger { opacity: 0; }
@@ -221,7 +225,6 @@ button { user-select: none; -webkit-user-select: none; }
   box-shadow: inset 3px 0 0 var(--primary-hover);
   background: rgba(110,86,207,0.08);
 }
-.item + .item { border-top: none; }
 .row-l1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .row-id { display: flex; align-items: baseline; gap: 4px; flex: 1 1 auto; min-width: 0; }
 .owner {
@@ -239,13 +242,6 @@ button { user-select: none; -webkit-user-select: none; }
   text-overflow: ellipsis;
 }
 .row-l2 { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.ver {
-  font: 12px/1.4 var(--mono);
-  color: var(--dim);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.ver.installed { color: var(--ok); }
 .meta {
   font: 11.5px/1.4 var(--mono);
   color: var(--faint);
@@ -277,13 +273,10 @@ button { user-select: none; -webkit-user-select: none; }
   flex-shrink: 0;
 }
 .chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.chip-ok { color: var(--ok); background: var(--ok-tint); }
-.chip-err { color: var(--err); background: var(--err-tint); }
+.chip-ok { color: #3FB97F; background: rgba(63,185,127,0.12); }
 .chip-info { color: var(--info); background: var(--info-tint); }
-.chip-mute { color: var(--dim); }
 
 /* rows compress when the list is long */
-.list.dense .item { gap: 3px; }
 
 /* add-repo sits inline under the list, not in a section at the bottom of a
    window that already scrolls — the action stays next to what it affects. */
@@ -355,6 +348,8 @@ button { user-select: none; -webkit-user-select: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
+  /* with the slide disabled, a 38% sliver reads as stuck; show a full bar. */
+  .progress::after { width: 100%; opacity: .55; }
 }
 
 /* --- tracked-mod rows: one line, shared column tracks -------------------
@@ -439,6 +434,7 @@ button { user-select: none; -webkit-user-select: none; }
       <button type="button" id="add" class="btn btn-outline">Add</button>
     </div>
     <div id="add-msg" class="msg"></div>
+    <div id="list-msg" class="msg"></div>
     <div id="restore-msg" class="msg"></div>
   </section>
 
@@ -485,6 +481,7 @@ button { user-select: none; -webkit-user-select: none; }
   const launchersErrors = $("launchers-errors");
   const progressEl = $("progress");
   const restoreConfirm = $("restore-confirm");
+  const listMsg = $("list-msg");
 
   let refreshing = false;
   let currentGameDir = "";
@@ -619,8 +616,15 @@ button { user-select: none; -webkit-user-select: none; }
     rm.title = "Remove " + full;
     rm.addEventListener("click", async () => {
       rm.disabled = true;
+      // The row is destroyed by the re-render, so remember its position and
+      // move focus to the neighbour (or the add field) instead of letting
+      // focus fall back to the document.
+      const idx = Array.prototype.indexOf.call(list.querySelectorAll(".item"), li);
       try { await call("removeRepo", full); } catch (e) {}
       await load();  // re-fetch + re-render
+      const buttons = list.querySelectorAll(".item .btn-danger");
+      const next = buttons[Math.min(idx, buttons.length - 1)];
+      (next || newRepo).focus();
     });
 
     row.append(nameSpan, ver, statusCell, rm);
@@ -780,6 +784,10 @@ button { user-select: none; -webkit-user-select: none; }
     // The Zig side returns the state as a JSON string; the glue may pass it
     // through as-is. Handle both shapes.
     if (typeof res === "string") { try { res = JSON.parse(res); } catch (e) { res = null; } }
+    // A failed read must not masquerade as an empty account: __applyState(null)
+    // renders the "No tracked repos yet" state, which is a lie here.
+    const failed = !res || typeof res !== "object";
+    showMsg(listMsg, failed ? "Couldn't load tracked repos." : "", failed ? "err" : "");
     window.__applyState(res);  // null → empty state
   }
 
@@ -808,6 +816,12 @@ button { user-select: none; -webkit-user-select: none; }
   $("restore-cancel").addEventListener("click", () => {
     restoreConfirm.hidden = true;
     $("restore").focus();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !restoreConfirm.hidden) {
+      restoreConfirm.hidden = true;
+      $("restore").focus();
+    }
   });
   $("restore-yes").addEventListener("click", async () => {
     restoreConfirm.hidden = true;
