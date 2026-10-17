@@ -304,16 +304,19 @@ fn dupeConfig(allocator: Allocator, src: Config) !Config {
 }
 
 test "defaultRepos returns the embedded seed repos in order" {
-    const repos = try defaultRepos(std.testing.allocator);
+    // Assert the embedded list specifically: `defaultRepos` prefers a user's
+    // <config-dir>/defaults.json when one exists, so routing the test through
+    // it would make the result depend on the developer's machine.
+    const repos = try parseDefaults(std.testing.allocator, embedded_defaults);
     defer freeRepos(std.testing.allocator, repos);
-    try std.testing.expectEqual(@as(usize, 6), repos.len);
+    try std.testing.expectEqual(@as(usize, 7), repos.len);
     try std.testing.expectEqualStrings("cumsauce", repos[0].owner);
     try std.testing.expectEqualStrings("gore", repos[0].name);
-    try std.testing.expectEqualStrings("desocketed", repos[5].owner);
-    try std.testing.expectEqualStrings("yakvc", repos[5].name);
+    try std.testing.expectEqualStrings("desocketed", repos[6].owner);
+    try std.testing.expectEqualStrings("yakvc", repos[6].name);
 
-    const expected_owners = [_][]const u8{ "cumsauce", "cumsauce", "cumsauce", "cumsauce", "cumsauce", "desocketed" };
-    const expected_names = [_][]const u8{ "gore", "foley", "earshot", "stalker", "aorta", "yakvc" };
+    const expected_owners = [_][]const u8{ "cumsauce", "cumsauce", "cumsauce", "cumsauce", "cumsauce", "cumsauce", "desocketed" };
+    const expected_names = [_][]const u8{ "gore", "foley", "earshot", "stalker", "aorta", "doorswing", "yakvc" };
     for (expected_owners, expected_names, repos) |eo, en, r| {
         try std.testing.expectEqualStrings(eo, r.owner);
         try std.testing.expectEqualStrings(en, r.name);
