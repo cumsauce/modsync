@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>modsync</title>
 <script>
 // Defined first and defensively: the Zig side evals
@@ -17,124 +18,332 @@ window.renderState = function (state) {
 </script>
 <style>
 :root {
-  --bg: #f4f5f7; --card: #ffffff; --fg: #1b1f24; --muted: #6b7280;
-  --border: #e2e5ea; --accent: #2563eb; --accent-fg: #ffffff;
-  --ok: #15803d; --warn: #b45309; --err: #b91c1c; --btn: #e8eaee;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171b; --card: #1d2126; --fg: #e7e9ee; --muted: #9299a5;
-    --border: #2b3038; --accent: #3b82f6; --accent-fg: #ffffff;
-    --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --btn: #2b3038;
-  }
+  --bg: #100E18;
+  --surface: #1B1828;
+  --surface-2: #232032;
+  --border: #302A42;
+  --hairline: rgba(255,255,255,0.10);
+  --divider: rgba(255,255,255,0.06);
+  --text: #EDEDF0;
+  --text-2: #A1A1AA;
+  --text-3: #8B8B93;
+  --accent: #A855F7;
+  --primary: #9333EA;
+  --fuchsia: #E879F9;
+  --ok: #86EFAC;
+  --err: #F87171;
+  --err-bg: rgba(248,113,113,0.10);
+  --btn-line: rgba(255,255,255,0.18);
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { max-width: 100%; }
 body {
-  margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
-  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 16px 16px 24px;
+  overflow-x: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
 }
-h1 { font-size: 18px; margin: 0 0 14px; }
+.wordmark {
+  font: 700 20px/1.2 var(--sans);
+  color: var(--fuchsia);
+  letter-spacing: -0.01em;
+  margin: 0 0 16px;
+}
 .card {
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px; margin-bottom: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top-color: var(--hairline);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 0 0 16px;
 }
-.card h2 {
-  font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--muted); margin: 0 0 10px;
+.card:last-child { margin-bottom: 0; }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
 }
-.row { display: flex; gap: 8px; align-items: center; }
-input[type=text] {
-  flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--border);
-  border-radius: 7px; background: var(--bg); color: var(--fg); font: inherit;
+.card-head h2 {
+  font: 600 16px/1.3 var(--sans);
+  color: var(--text);
+  margin: 0;
+  text-transform: none;
 }
-input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-button {
-  padding: 7px 12px; border: 1px solid var(--border); border-radius: 7px;
-  background: var(--btn); color: var(--fg); font: inherit; cursor: pointer;
+.head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* ---- buttons: tiers by style, never by size ---- */
+.btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: none;
+  font: 14px/1 var(--sans);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color .15s linear, opacity .15s linear, border-color .15s linear;
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: .6; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-button.danger { color: var(--err); }
-.hint { font-size: 12px; margin-top: 7px; min-height: 15px; color: var(--muted); }
-.hint.ok { color: var(--ok); }
-.hint.err { color: var(--err); }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { opacity: .88; }
+.btn-outline { background: transparent; border: 1px solid var(--btn-line); color: var(--text); }
+.btn-outline:hover:not(:disabled) { background: rgba(255,255,255,0.06); }
+.btn-ghost { background: transparent; color: var(--text-2); }
+.btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.06); }
+.btn-danger { background: transparent; color: var(--err); }
+.btn-danger:hover:not(:disabled) { background: var(--err-bg); }
+.btn:disabled { cursor: default; opacity: .6; }
+
+/* ---- labels + inputs ---- */
+.label {
+  display: block;
+  font: 14px/1.5 var(--sans);
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.input-row { display: flex; align-items: center; gap: 8px; }
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: 14px/1.5 var(--sans);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.input.mono { font: 12px/1.4 var(--mono); }
+.input::placeholder { color: var(--text-3); opacity: 1; }
+.input:focus { border-color: var(--accent); }
+.input:focus-visible { outline: 2px solid var(--fuchsia); outline-offset: 2px; }
+
+/* ---- messages: success line or structured error block ---- */
+.msg {
+  font: 14px/1.5 var(--sans);
+  color: var(--text-2);
+  margin-top: 8px;
+}
+.msg:empty { display: none; }
+.msg.ok { color: var(--ok); }
+.msg.err {
+  background: var(--err-bg);
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--err);
+}
+
+/* ---- list rows: dense, two-line, manifest-like ---- */
 .list { list-style: none; margin: 0; padding: 0; }
-.list li {
-  display: flex; gap: 10px; align-items: center;
-  padding: 9px 0; border-top: 1px solid var(--border);
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0;
 }
-.list li:first-child { border-top: 0; }
-.repo-name { font-weight: 600; flex: 1 1 auto; min-width: 90px; overflow-wrap: anywhere; }
-.ver { color: var(--muted); font-size: 12px; flex: 0 1 auto; }
-.status { font-size: 12px; flex: 0 1 180px; overflow-wrap: anywhere; }
-.status.ok { color: var(--ok); }
-.status.muted { color: var(--muted); }
-.status.warn { color: var(--warn); }
-.status.err { color: var(--err); }
-.empty { color: var(--muted); padding: 10px 0; font-size: 13px; }
-.launcher-kind {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--muted); padding-top: 10px; border-top: 0;
+.item + .item { border-top: 1px solid var(--divider); }
+.list.dense .item + .item { border-top-color: var(--hairline); }
+.row-l1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.launcher-label { flex: 1 1 auto; min-width: 90px; overflow-wrap: anywhere; }
-.launcher-label.selected { color: var(--ok); font-weight: 600; }
+.row-id {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.owner {
+  font: 12px/1.4 var(--mono);
+  color: var(--text-3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.name {
+  font: 14px/1.5 var(--sans);
+  color: var(--text);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-l2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ver {
+  font: 12px/1.4 var(--mono);
+  color: var(--text-3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ver.installed { color: var(--ok); }
+.meta {
+  font: 12px/1.4 var(--mono);
+  color: var(--text-3);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta.grow { flex: 1 1 auto; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  font: 12px/1.4 var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  flex-shrink: 1;
+}
+.chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.chip-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chip-ok { color: var(--ok); }
+.chip-err { color: var(--err); }
+.chip-info { color: var(--fuchsia); }
+.chip-mute { color: var(--text-2); }
+
+/* ---- empty states ---- */
+.empty-title {
+  font: 600 14px/1.5 var(--sans);
+  color: var(--text);
+  margin: 0 0 8px;
+}
+.empty-body {
+  font: 14px/1.5 var(--sans);
+  color: var(--text-2);
+  margin: 0 0 12px;
+  max-width: 64ch;
+}
+.empty > :last-child { margin-bottom: 0; }
+
+:focus-visible {
+  outline: 2px solid var(--fuchsia);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
 </style>
 </head>
 <body>
 <main>
-  <h1>modsync</h1>
+  <h1 class="wordmark">modsync</h1>
 
   <section class="card">
-    <div class="row" style="justify-content:space-between; margin-bottom:4px;">
+    <div class="card-head">
       <h2>Detected launchers</h2>
-      <button id="rescan">Rescan</button>
+      <button type="button" id="rescan" class="btn btn-ghost js-rescan" hidden>Rescan</button>
     </div>
     <ul id="launchers" class="list"></ul>
-    <div id="launchers-empty" class="empty" hidden>No launchers found — enter a path below.</div>
-    <div id="launchers-errors" class="hint"></div>
-  </section>
-
-  <section class="card">
-    <h2>Minecraft folder</h2>
-    <div class="row">
-      <input id="folder" type="text" placeholder="/path/to/.minecraft" spellcheck="false">
-      <button id="save" class="primary">Save</button>
+    <div id="launchers-empty" class="empty">
+      <p class="empty-title" id="launchers-empty-title">Not scanned yet</p>
+      <p class="empty-body" id="launchers-empty-body">Click Rescan to look for installed Prism and Modrinth profiles.</p>
+      <button type="button" class="btn btn-ghost js-rescan">Rescan</button>
     </div>
-    <div id="folder-msg" class="hint"></div>
+    <div id="launchers-errors" class="msg"></div>
   </section>
 
   <section class="card">
-    <div class="row" style="justify-content:space-between; margin-bottom:4px;">
-      <h2 style="margin:0;">Tracked mods</h2>
-      <div class="row" style="gap:8px;">
-        <button id="restore">Restore defaults</button>
-        <button id="refresh">Refresh all</button>
+    <div class="card-head">
+      <h2>Minecraft folder</h2>
+    </div>
+    <label class="label" for="folder">Folder path</label>
+    <div class="input-row">
+      <input id="folder" class="input mono" type="text" placeholder="e.g. ~/.minecraft"
+             spellcheck="false" autocomplete="off">
+      <button type="button" id="save" class="btn btn-outline">Save</button>
+    </div>
+    <div id="folder-msg" class="msg"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Tracked mods</h2>
+      <div class="head-actions">
+        <button type="button" id="restore" class="btn btn-ghost">Restore defaults</button>
+        <button type="button" id="refresh" class="btn btn-primary">Refresh all</button>
       </div>
     </div>
     <ul id="list" class="list"></ul>
-    <div id="empty" class="empty" hidden>No mods tracked yet — add a repo below.</div>
+    <div id="empty" class="empty">
+      <p class="empty-title">No tracked repos yet</p>
+      <p class="empty-body">Add your first with owner/name below.</p>
+    </div>
+    <div id="restore-msg" class="msg"></div>
   </section>
 
   <section class="card">
-    <h2>Add repo</h2>
-    <div class="row">
-      <input id="new-repo" type="text" placeholder="owner/name" spellcheck="false">
-      <button id="add" class="primary">Add</button>
+    <div class="card-head">
+      <h2>Add a repo</h2>
     </div>
-    <div id="add-msg" class="hint"></div>
+    <label class="label" for="new-repo">Repository</label>
+    <div class="input-row">
+      <input id="new-repo" class="input" type="text" placeholder="e.g. owner/name"
+             spellcheck="false" autocomplete="off">
+      <button type="button" id="add" class="btn btn-outline">Add</button>
+    </div>
+    <div id="add-msg" class="msg"></div>
   </section>
 </main>
 <script>
 "use strict";
 (async function () {
   const $ = (id) => document.getElementById(id);
+
+  // Element refs and state are declared before the first await: the Zig side
+  // can eval renderState (and thus __applyState) while a fetch is in flight.
   const folder = $("folder"), folderMsg = $("folder-msg");
   const list = $("list"), empty = $("empty");
   const refreshBtn = $("refresh");
   const newRepo = $("new-repo"), addMsg = $("add-msg");
+  const restoreMsg = $("restore-msg");
+  const launchersList = $("launchers");
+  const launchersEmpty = $("launchers-empty");
+  const launchersEmptyTitle = $("launchers-empty-title");
+  const launchersEmptyBody = $("launchers-empty-body");
+  const launchersErrors = $("launchers-errors");
+  const rescanHeader = $("rescan");
 
-  // All five bindings are globals injected by the webview glue; each returns
+  let refreshing = false;
+  let currentGameDir = "";
+  let lastLaunchers = null;
+
+  // All eight bindings are globals injected by the webview glue; each returns
   // a Promise, so every call site awaits.
   async function call(name, ...args) {
     const fn = window[name];
@@ -144,51 +353,177 @@ button.danger { color: var(--err); }
   // Zig's binds reply with the strings "true"/"false"; tolerate booleans too.
   function asBool(res) { return res !== "false" && res !== false; }
 
-  let refreshing = false;
+  // One message slot per card: plain success line, or a structured error block.
+  function showMsg(el, text, kind) {
+    el.className = "msg" + (kind ? " " + kind : "");
+    el.textContent = kind === "err" && text ? "Error: " + text : (text || "");
+  }
+
   function setRefreshing(on) {
     refreshing = on;
     refreshBtn.disabled = on;
     refreshBtn.textContent = on ? "Refreshing…" : "Refresh all";
   }
 
-  function statusClass(repo) {
+  function chipClass(repo) {
     const s = String(repo.status || "").toLowerCase();
-    if (s.includes("error") || s.includes("fail")) return "err";
-    if (s.includes("no release")) return "warn";
-    if (repo.installedVersion) return "ok";
-    return "muted";
+    if (s.includes("error") || s.includes("fail")) return "chip-err";
+    if (s.includes("no release")) return "chip-info";
+    if (repo.installedVersion) return "chip-ok";
+    return "chip-mute";
+  }
+
+  function statusChip(repo) {
+    const raw = String(repo.status || "").trim();
+    const text = raw || "not checked";
+    const chip = document.createElement("span");
+    chip.className = "chip " + chipClass(repo);
+    chip.title = text;
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    const label = document.createElement("span");
+    label.className = "chip-text";
+    label.textContent = text;
+    chip.append(dot, label);
+    return chip;
+  }
+
+  function versionText(repo) {
+    const v = String(repo.installedVersion || "");
+    if (!v) return "not installed";
+    return /^\d/.test(v) ? "v" + v : v;
   }
 
   function renderList(repos) {
     list.textContent = "";
     for (const repo of repos) {
+      const owner = String(repo.owner || "");
+      const name = String(repo.name || "");
+      const full = owner + "/" + name;
+
       const li = document.createElement("li");
+      li.className = "item";
 
-      const name = document.createElement("span");
-      name.className = "repo-name";
-      name.textContent = repo.owner + "/" + repo.name;
+      const line1 = document.createElement("div");
+      line1.className = "row-l1";
 
-      const ver = document.createElement("span");
-      ver.className = "ver";
-      ver.textContent = repo.installedVersion || "not installed";
-
-      const st = document.createElement("span");
-      st.className = "status " + statusClass(repo);
-      st.textContent = repo.status || "";
+      const idBox = document.createElement("div");
+      idBox.className = "row-id";
+      const ownerSpan = document.createElement("span");
+      ownerSpan.className = "owner";
+      ownerSpan.textContent = owner + "/";
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "name";
+      nameSpan.textContent = name;
+      nameSpan.title = full;
+      idBox.append(ownerSpan, nameSpan);
 
       const rm = document.createElement("button");
-      rm.className = "danger";
+      rm.type = "button";
+      rm.className = "btn btn-danger";
       rm.textContent = "Remove";
+      rm.title = "Remove " + full;
       rm.addEventListener("click", async () => {
         rm.disabled = true;
-        try { await call("removeRepo", repo.owner + "/" + repo.name); } catch (e) {}
+        try { await call("removeRepo", full); } catch (e) {}
         await load();  // re-fetch + re-render
       });
+      line1.append(idBox, rm);
 
-      li.append(name, ver, st, rm);
+      const line2 = document.createElement("div");
+      line2.className = "row-l2";
+      const ver = document.createElement("span");
+      ver.className = "ver" + (repo.installedVersion ? " installed" : "");
+      ver.textContent = versionText(repo);
+      line2.append(ver, statusChip(repo));
+
+      li.append(line1, line2);
       list.appendChild(li);
     }
     empty.hidden = repos.length > 0;
+    list.classList.toggle("dense", repos.length > 5);
+  }
+
+  function renderLaunchers(payload) {
+    launchersList.textContent = "";
+    lastLaunchers = payload;
+    const profiles = (payload && Array.isArray(payload.profiles)) ? payload.profiles : [];
+    const errors = (payload && Array.isArray(payload.errors)) ? payload.errors : [];
+    const none = profiles.length === 0;
+
+    launchersEmpty.hidden = !none;
+    rescanHeader.hidden = none;
+    if (none) {
+      launchersEmptyTitle.textContent = "No launcher profiles found";
+      launchersEmptyBody.textContent =
+        "Prism or Modrinth doesn't appear to be installed, or no profiles exist yet.";
+    } else {
+      for (const p of profiles) {
+        const selected = p.gameDir === currentGameDir;
+
+        const li = document.createElement("li");
+        li.className = "item";
+
+        const line1 = document.createElement("div");
+        line1.className = "row-l1";
+
+        const idBox = document.createElement("div");
+        idBox.className = "row-id";
+        const kind = document.createElement("span");
+        kind.className = "owner";
+        kind.textContent = p.kind === "prism" ? "prism/" : "modrinth/";
+        const name = document.createElement("span");
+        name.className = "name";
+        name.textContent = String(p.name || "");
+        name.title = p.gameDir ? String(p.name || "") + " — " + p.gameDir : String(p.name || "");
+        idBox.append(kind, name);
+
+        const use = document.createElement("button");
+        use.type = "button";
+        use.className = "btn btn-ghost";
+        use.textContent = "Use";
+        use.title = "Use " + String(p.name || "this profile");
+        use.addEventListener("click", async () => {
+          let ok = false;
+          try { ok = asBool(await call("selectProfile", p.gameDir)); } catch (e) {}
+          if (ok) await load();  // re-fetch state; __applyState re-renders rows
+        });
+        line1.append(idBox, use);
+
+        const line2 = document.createElement("div");
+        line2.className = "row-l2";
+        const kindMeta = document.createElement("span");
+        kindMeta.className = "meta";
+        kindMeta.textContent = p.kind === "prism" ? "Prism Launcher" : "Modrinth App";
+        line2.append(kindMeta);
+        if (p.gameDir) {
+          const path = document.createElement("span");
+          path.className = "meta grow";
+          path.textContent = p.gameDir;
+          path.title = p.gameDir;
+          line2.append(path);
+        }
+        if (selected) {
+          const chip = document.createElement("span");
+          chip.className = "chip chip-ok";
+          chip.title = "In use";
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          const label = document.createElement("span");
+          label.className = "chip-text";
+          label.textContent = "in use";
+          chip.append(dot, label);
+          line2.append(chip);
+        }
+
+        li.append(line1, line2);
+        launchersList.appendChild(li);
+      }
+    }
+
+    showMsg(launchersErrors, errors.length ? "Couldn't read: " + errors.join(", ") : "",
+      errors.length ? "err" : "");
+    launchersList.classList.toggle("dense", profiles.length > 5);
   }
 
   // Single entry point for state: getConfig on load, renderState pushes during
@@ -201,6 +536,7 @@ button.danger { color: var(--err); }
     if (document.activeElement !== folder) folder.value = state.minecraftDir || "";
     currentGameDir = state.minecraftDir || "";
     renderList(Array.isArray(state.repos) ? state.repos : []);
+    if (lastLaunchers) renderLaunchers(lastLaunchers);  // refresh "in use" chip
     setRefreshing(false);
   };
 
@@ -213,75 +549,29 @@ button.danger { color: var(--err); }
     window.__applyState(res);  // null → empty state
   }
 
-  // ---- Detected launchers -------------------------------------------------
-
-  const launchersList = $("launchers");
-  const launchersEmpty = $("launchers-empty");
-  const launchersErrors = $("launchers-errors");
-  let currentGameDir = "";
-
-  function renderLaunchers(payload) {
-    launchersList.textContent = "";
-    const profiles = (payload && Array.isArray(payload.profiles)) ? payload.profiles : [];
-    const errors = (payload && Array.isArray(payload.errors)) ? payload.errors : [];
-
-    if (profiles.length === 0) {
-      launchersEmpty.hidden = false;
-    } else {
-      launchersEmpty.hidden = true;
-      let lastKind = null;
-      for (const p of profiles) {
-        if (p.kind !== lastKind) {
-          lastKind = p.kind;
-          const h = document.createElement("li");
-          h.className = "launcher-kind";
-          h.textContent = p.kind === "prism" ? "Prism Launcher" : "Modrinth App";
-          launchersList.appendChild(h);
-        }
-        const li = document.createElement("li");
-        li.className = "launcher-row";
-
-        const label = document.createElement("span");
-        label.className = "launcher-label" + (p.gameDir === currentGameDir ? " selected" : "");
-        label.textContent = p.name + (p.gameDir === currentGameDir ? "  ✓" : "");
-        label.title = p.gameDir;
-
-        const use = document.createElement("button");
-        use.textContent = "Use";
-        use.addEventListener("click", async () => {
-          let ok = false;
-          try { ok = asBool(await call("selectProfile", p.gameDir)); } catch (e) {}
-          if (ok) await load();  // re-fetch state (updates folder + selected row)
-        });
-
-        li.appendChild(label);
-        li.appendChild(use);
-        launchersList.appendChild(li);
-      }
-    }
-
-    launchersErrors.textContent = errors.length
-      ? "Couldn't read: " + errors.join(", ")
-      : "";
-  }
-
   async function loadLaunchers() {
     let payload = null;
     try { payload = await call("listLaunchers"); } catch (e) {}
-    if (typeof payload === "string") { try { payload = JSON.parse(payload); } catch (e) { payload = null; } }
+    if (typeof payload === "string") {
+      try { payload = JSON.parse(payload); } catch (e) { payload = null; }
+    }
+    if (!payload || typeof payload !== "object") {
+      // Keep the "Not scanned yet" copy; just report that the read failed.
+      showMsg(launchersErrors, "Couldn't read launcher profiles.", "err");
+      return;
+    }
     renderLaunchers(payload);
   }
 
-  $("rescan").addEventListener("click", () => loadLaunchers());
+  document.querySelectorAll(".js-rescan").forEach((btn) => {
+    btn.addEventListener("click", () => loadLaunchers());
+  });
 
   $("restore").addEventListener("click", async () => {
     if (!confirm("Replace your tracked repos with the defaults file?")) return;
     let ok = false;
     try { ok = asBool(await call("restoreDefaults")); } catch (e) {}
-    if (!ok) {
-      addMsg.className = "hint err";
-      addMsg.textContent = "Couldn't restore defaults.";
-    }
+    showMsg(restoreMsg, ok ? "" : "Couldn't restore defaults.", ok ? "" : "err");
     await load();  // re-fetch + re-render
   });
 
@@ -291,15 +581,19 @@ button.danger { color: var(--err); }
     window.__pendingState = null;
   }
 
-  $("save").addEventListener("click", async () => {
-    folderMsg.className = "hint";
-    folderMsg.textContent = "";
+  async function saveFolder() {
+    showMsg(folderMsg, "", "");
     let ok = false;
     try { ok = asBool(await call("setMinecraftDir", folder.value)); } catch (e) {}
-    folderMsg.className = "hint " + (ok ? "ok" : "err");
-    folderMsg.textContent = ok ? "Saved." : "Couldn't save folder.";
-    if (ok) setTimeout(() => { folderMsg.textContent = ""; }, 2000);
-  });
+    if (ok) {
+      showMsg(folderMsg, "Saved.", "ok");
+      setTimeout(() => { showMsg(folderMsg, "", ""); }, 2000);
+    } else {
+      showMsg(folderMsg, "Couldn't save folder.", "err");
+    }
+  }
+  $("save").addEventListener("click", saveFolder);
+  folder.addEventListener("keydown", (e) => { if (e.key === "Enter") saveFolder(); });
 
   refreshBtn.addEventListener("click", async () => {
     if (refreshing) return;
@@ -310,13 +604,11 @@ button.danger { color: var(--err); }
     // On "true": stay disabled until a renderState call arrives.
   });
 
-  $("add").addEventListener("click", async () => {
+  async function addRepo() {
     const value = newRepo.value.trim();
-    addMsg.className = "hint";
-    addMsg.textContent = "";
+    showMsg(addMsg, "", "");
     if (!value) {
-      addMsg.className = "hint err";
-      addMsg.textContent = "Enter owner/name.";
+      showMsg(addMsg, "Enter owner/name.", "err");
       return;
     }
     let ok = false;
@@ -324,12 +616,12 @@ button.danger { color: var(--err); }
     if (ok) {
       newRepo.value = "";
     } else {
-      addMsg.className = "hint err";
-      addMsg.textContent = "Couldn't add " + value + ".";
+      showMsg(addMsg, "Couldn't add " + value + ".", "err");
     }
     await load();  // re-fetch + re-render
-  });
-  newRepo.addEventListener("keydown", (e) => { if (e.key === "Enter") $("add").click(); });
+  }
+  $("add").addEventListener("click", addRepo);
+  newRepo.addEventListener("keydown", (e) => { if (e.key === "Enter") addRepo(); });
 
   await load();
   await loadLaunchers();
