@@ -26,4 +26,5 @@ test {
     _ = @import("install.zig");
     _ = @import("app.zig");
     _ = @import("launcher.zig");
+    _ = @import("os.zig");
 }

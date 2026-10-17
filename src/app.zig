@@ -8,6 +8,7 @@ const config_mod = @import("config.zig");
 const net = @import("net.zig");
 const install = @import("install.zig");
 const launcher = @import("launcher.zig");
+const os = @import("os.zig");
 
 const Config = config_mod.Config;
 const Repo = config_mod.Repo;
@@ -52,8 +53,36 @@ pub fn buildLaunchersJson(allocator: Allocator, d: *const launcher.Discovery) ![
 // Pure state-JSON builder (unit-testable offline)
 // ============================================================================
 
+/// Progress stage of one repo's update. Serialized to the UI as a lowercase
+/// string; `idle` means "not touched by an update yet", `success` means the
+/// repo settled (up to date or freshly installed), `error` means the string in
+/// `RepoStatus.error` explains what failed.
+pub const RepoStage = enum {
+    idle,
+    checking,
+    downloading,
+    installing,
+    success,
+    failed,
+
+    pub fn toJson(self: RepoStage) []const u8 {
+        return switch (self) {
+            .idle => "idle",
+            .checking => "checking",
+            .downloading => "downloading",
+            .installing => "installing",
+            .success => "success",
+            .failed => "error",
+        };
+    }
+};
+
 /// One row of per-repo status for the UI, matched to a Config repo by
 /// owner AND name (never by index).
+///
+/// Entries stored on `App.repo_states` OWN every non-null string
+/// (`freeStatus`); entries passed to `buildStateJson` by tests are borrowed
+/// views. `buildStateJson` only serializes, so it never frees either kind.
 pub const RepoStatus = struct {
     owner: []const u8,
     name: []const u8,
@@ -62,23 +91,32 @@ pub const RepoStatus = struct {
     /// (null when the fetch failed or no refresh has run yet). Lets the UI
     /// derive outdated = installedVersion != latestVersion.
     latest: ?[]const u8 = null,
+    stage: RepoStage = .idle,
+    /// Detailed failure copy for the row, or null.
+    err: ?[]const u8 = null,
+    /// Release tag that could be installed while the repo is NOT installed
+    /// (drives "Available release vX"), else null.
+    available_version: ?[]const u8 = null,
 };
 
-/// Emit the JSON blob the UI (Task 7) renders:
-/// `{"minecraftDir":"...","repos":[{"owner":...,"name":...,"installedVersion":
-/// "v0.1.3"|null,"installedJar":...|null,"status":"...","latestVersion":
-/// "v0.1.4"|null}, ...]}`.
+/// Emit the JSON blob the UI renders:
+/// `{"minecraftDir":"...","updating":false,"repos":[{"owner":...,"name":...,
+/// "installedVersion":"v0.1.3"|null,"installedJar":...|null,"status":"...",
+/// "latestVersion":"v0.1.4"|null,"stage":"idle","error":null,
+/// "availableVersion":null}, ...]}`.
 /// Each entry of `statuses` is paired with the repo whose `owner` AND `name`
 /// match it (linear scan — the config can mutate mid-refresh, so index
 /// pairing would drift); repos with no matching status get an empty status.
 /// One row per `cfg.repos` entry, in `cfg.repos` order. Everything is
 /// serialized immediately, so nothing is retained past the call.
-pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []const RepoStatus) ![]u8 {
+pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []const RepoStatus, updating: bool) ![]u8 {
     var out = try std.ArrayList(u8).initCapacity(allocator, 256);
     errdefer out.deinit(allocator);
 
     try out.appendSlice(allocator, "{\"minecraftDir\":");
     try appendJsonString(allocator, &out, cfg.minecraftDir);
+    try out.appendSlice(allocator, ",\"updating\":");
+    try out.appendSlice(allocator, if (updating) "true" else "false");
     try out.appendSlice(allocator, ",\"repos\":[");
 
     for (cfg.repos, 0..) |repo, i| {
@@ -114,6 +152,28 @@ pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []cons
         if (match) |m| {
             if (m.latest) |lv| {
                 try appendJsonString(allocator, &out, lv);
+            } else {
+                try out.appendSlice(allocator, "null");
+            }
+        } else {
+            try out.appendSlice(allocator, "null");
+        }
+        try out.appendSlice(allocator, ",\"stage\":");
+        try appendJsonString(allocator, &out, if (match) |m| m.stage.toJson() else RepoStage.idle.toJson());
+        try out.appendSlice(allocator, ",\"error\":");
+        if (match) |m| {
+            if (m.err) |e| {
+                try appendJsonString(allocator, &out, e);
+            } else {
+                try out.appendSlice(allocator, "null");
+            }
+        } else {
+            try out.appendSlice(allocator, "null");
+        }
+        try out.appendSlice(allocator, ",\"availableVersion\":");
+        if (match) |m| {
+            if (m.available_version) |av| {
+                try appendJsonString(allocator, &out, av);
             } else {
                 try out.appendSlice(allocator, "null");
             }
@@ -160,6 +220,13 @@ const SpinMutex = struct {
     }
 };
 
+/// Exact UI copy for fixed failure classes, per the Arctic Cyan contract.
+const app_error_write = "Can't write to this install. Check folder permissions.";
+const app_error_download = "Couldn't download. Check your connection and retry.";
+const app_error_offline = "Couldn't reach GitHub. Check your connection and retry.";
+const app_error_not_found = "Repository not found or unavailable. Check owner/name.";
+const app_error_no_jar = "No compatible .jar release found for this install.";
+
 pub const App = struct {
     allocator: Allocator,
     /// Webview handle; created in `run` and used from bound callbacks and the
@@ -172,8 +239,19 @@ pub const App = struct {
     /// worker thread.
     mutex: SpinMutex = .{},
     /// True while a refresh worker is running (guards double-spawn; also read
-    /// by `run`'s drain loop after `webview_run` returns).
+    /// by `run`'s drain loop after `webview_run` returns). Serialized as the
+    /// top-level `updating` flag, and checked by the install-mutating
+    /// callbacks.
     refreshing: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    /// Per-repo stage/error/available-version state, keyed by owner+name.
+    /// Entries own their strings (see `freeStatus`); pruned when a repo is
+    /// removed from the config.
+    repo_states: []RepoStatus = &.{},
+    /// Duplicated owner/name of the repo the running worker is currently
+    /// checking/writing, so `removeRepo` can reject a mid-write removal.
+    /// Always set/cleared under `mutex`.
+    write_owner: ?[]const u8 = null,
+    write_name: ?[]const u8 = null,
     /// Set under the mutex once the webview handle is destroyed; worker paths
     /// check it before calling `webview_dispatch` on `w`.
     stopped: bool = false,
@@ -209,6 +287,10 @@ pub const App = struct {
         // Safe because `run` drains the refresh worker and destroys the
         // webview (setting `stopped`) before returning; `main` calls `deinit`
         // only after `run` completes, so no worker can touch `cfg`/`w` here.
+        for (self.repo_states) |s| freeStatus(self.allocator, s);
+        if (self.repo_states.len != 0) self.allocator.free(self.repo_states);
+        self.repo_states = &.{};
+        self.clearWritingLocked();
         config_mod.freeConfig(self.allocator, self.cfg);
         self.cfg = undefined;
     }
@@ -304,6 +386,12 @@ pub const App = struct {
         _ = c.webview_bind(w, "listLaunchers", cbListLaunchers, app_arg);
         _ = c.webview_bind(w, "selectProfile", cbSelectProfile, app_arg);
         _ = c.webview_bind(w, "restoreDefaults", cbRestoreDefaults, app_arg);
+        _ = c.webview_bind(w, "updateRepo", cbUpdateRepo, app_arg);
+        _ = c.webview_bind(w, "installRepo", cbInstallRepo, app_arg);
+        _ = c.webview_bind(w, "retryRepo", cbRetryRepo, app_arg);
+        _ = c.webview_bind(w, "openUrl", cbOpenUrl, app_arg);
+        _ = c.webview_bind(w, "copyToClipboard", cbCopyToClipboard, app_arg);
+        _ = c.webview_bind(w, "validateFolder", cbValidateFolder, app_arg);
 
         _ = c.webview_run(w);
 
@@ -408,33 +496,219 @@ pub const App = struct {
     // Background refresh
     // ------------------------------------------------------------------
 
-    /// Fetch the latest release for one repo and install it if needed.
-    /// Returns an allocator-owned status string for the UI row ("up to date",
-    /// "installed vX", "no releases", "no jar asset", "error: <name>").
-    /// On a successful fetch, writes an allocator-owned dupe of the latest
-    /// tag into `latest_out` (null on any failure; caller frees).
-    /// Never aborts — every failure becomes a status string.
-    fn refreshRepo(self: *App, client: *std.http.Client, minecraft_dir: []const u8, token: ?[]const u8, repo: Repo, latest_out: *?[]const u8) []const u8 {
-        const fetched = net.fetchLatestAsset(self.allocator, client, repo.owner, repo.name, token) catch |err| {
-            return switch (err) {
-                error.NoReleases => self.allocator.dupe(u8, "no releases") catch unreachable,
-                error.NoJarAsset => self.allocator.dupe(u8, "no jar asset") catch unreachable,
-                else => std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch unreachable,
-            };
-        } orelse return self.allocator.dupe(u8, "no releases") catch unreachable;
-        latest_out.* = self.allocator.dupe(u8, fetched.tag) catch null;
+    // ------------------------------------------------------------------
+    // Per-repo progress state
+    // ------------------------------------------------------------------
+
+    /// Find the state row for `owner`/`name`; caller holds `mutex`.
+    fn stateSlotLocked(self: *App, owner: []const u8, name: []const u8) ?*RepoStatus {
+        for (self.repo_states) |*s| {
+            if (std.mem.eql(u8, s.owner, owner) and std.mem.eql(u8, s.name, name)) return s;
+        }
+        return null;
+    }
+
+    /// Append a fresh row for `owner`/`name` (or return the existing one).
+    /// Caller holds `mutex`. The new row owns freshly-duped strings.
+    fn ensureStateLocked(self: *App, owner: []const u8, name: []const u8) !*RepoStatus {
+        if (self.stateSlotLocked(owner, name)) |s| return s;
+
+        const next = try self.allocator.alloc(RepoStatus, self.repo_states.len + 1);
+        errdefer self.allocator.free(next);
+        @memcpy(next[0..self.repo_states.len], self.repo_states);
+
+        const owner_copy = try self.allocator.dupe(u8, owner);
+        errdefer self.allocator.free(owner_copy);
+        const name_copy = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(name_copy);
+        const status_copy = try self.allocator.dupe(u8, "");
+        next[self.repo_states.len] = .{
+            .owner = owner_copy,
+            .name = name_copy,
+            .status = status_copy,
+        };
+
+        if (self.repo_states.len != 0) self.allocator.free(self.repo_states);
+        self.repo_states = next;
+        return &next[next.len - 1];
+    }
+
+    /// Replace an owned optional string, freeing the previous value.
+    /// Caller holds `mutex`.
+    fn setOwnedLocked(self: *App, slot: *?[]const u8, value: ?[]const u8) void {
+        const copy: ?[]const u8 = if (value) |v| self.allocator.dupe(u8, v) catch return else null;
+        if (slot.*) |old| self.allocator.free(old);
+        slot.* = copy;
+    }
+
+    /// Replace a row's owned status text. Caller holds `mutex`.
+    fn setStatusTextLocked(self: *App, s: *RepoStatus, text: []const u8) void {
+        const copy = self.allocator.dupe(u8, text) catch return;
+        self.allocator.free(s.status);
+        s.status = copy;
+    }
+
+    /// First stage of an update: mark the row "checking" and drop stale error
+    /// copy from a previous run.
+    fn beginRepo(self: *App, owner: []const u8, name: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const s = self.ensureStateLocked(owner, name) catch return;
+        s.stage = .checking;
+        self.setOwnedLocked(&s.err, null);
+    }
+
+    fn setStage(self: *App, owner: []const u8, name: []const u8, stage: RepoStage) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const s = self.ensureStateLocked(owner, name) catch return;
+        s.stage = stage;
+    }
+
+    /// Record the release tag the worker just saw. `available` is true while
+    /// the repo is not installed, so the UI can show "Available release vX".
+    fn setFetched(self: *App, owner: []const u8, name: []const u8, tag: []const u8, available: bool) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const s = self.ensureStateLocked(owner, name) catch return;
+        self.setOwnedLocked(&s.latest, tag);
+        self.setOwnedLocked(&s.available_version, if (available) tag else null);
+        s.stage = .success;
+    }
+
+    /// Terminal success: clear error/available copy (the mod is installed) and
+    /// store the human status text.
+    fn markSuccess(self: *App, owner: []const u8, name: []const u8, text: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const s = self.ensureStateLocked(owner, name) catch return;
+        s.stage = .success;
+        self.setStatusTextLocked(s, text);
+        self.setOwnedLocked(&s.err, null);
+        self.setOwnedLocked(&s.available_version, null);
+    }
+
+    /// Terminal failure: stage=error, status="error", detailed message.
+    fn markError(self: *App, owner: []const u8, name: []const u8, message: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const s = self.ensureStateLocked(owner, name) catch return;
+        s.stage = .failed;
+        self.setStatusTextLocked(s, "error");
+        self.setOwnedLocked(&s.err, message);
+    }
+
+    fn pruneStatesLocked(self: *App) void {
+        if (self.repo_states.len == 0) return;
+
+        var keep: usize = 0;
+        for (self.repo_states) |s| {
+            if (self.repoIsTrackedLocked(s.owner, s.name)) keep += 1;
+        }
+        if (keep == self.repo_states.len) return;
+
+        if (keep == 0) {
+            for (self.repo_states) |s| freeStatus(self.allocator, s);
+            self.allocator.free(self.repo_states);
+            self.repo_states = &.{};
+            return;
+        }
+
+        const next = self.allocator.alloc(RepoStatus, keep) catch return;
+        var i: usize = 0;
+        for (self.repo_states) |s| {
+            if (!self.repoIsTrackedLocked(s.owner, s.name)) {
+                freeStatus(self.allocator, s);
+                continue;
+            }
+            next[i] = s;
+            i += 1;
+        }
+        self.allocator.free(self.repo_states);
+        self.repo_states = next;
+    }
+
+    fn repoIsTrackedLocked(self: *App, owner: []const u8, name: []const u8) bool {
+        for (self.cfg.repos) |r| {
+            if (std.mem.eql(u8, r.owner, owner) and std.mem.eql(u8, r.name, name)) return true;
+        }
+        return false;
+    }
+
+    /// Mark `owner`/`name` as the repo the worker is touching. The remove
+    /// binding rejects removing exactly this repo until it is cleared.
+    fn markWriting(self: *App, owner: []const u8, name: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.clearWritingLocked();
+        self.write_owner = self.allocator.dupe(u8, owner) catch null;
+        self.write_name = self.allocator.dupe(u8, name) catch null;
+    }
+
+    fn clearWriting(self: *App) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.clearWritingLocked();
+    }
+
+    fn clearWritingLocked(self: *App) void {
+        if (self.write_owner) |v| self.allocator.free(v);
+        if (self.write_name) |v| self.allocator.free(v);
+        self.write_owner = null;
+        self.write_name = null;
+    }
+
+    // ------------------------------------------------------------------
+    // Staged update worker
+    // ------------------------------------------------------------------
+
+    /// Stage one repo: check -> (download -> install)? -> success/error.
+    /// `single` is true for updateRepo/installRepo/retryRepo, which push after
+    /// every stage; the all-repos batch pushes one coherent snapshot at the
+    /// end instead, leaving pre-run versions/counts untouched while it runs.
+    fn updateOne(self: *App, client: *std.http.Client, minecraft_dir: []const u8, token: ?[]const u8, repo: Repo, single: bool) void {
+        self.markWriting(repo.owner, repo.name);
+        defer self.clearWriting();
+        self.beginRepo(repo.owner, repo.name);
+        if (single) self.pushCurrentState();
+
+        var rate_reset: ?i64 = null;
+        const fetched = net.fetchLatestReleaseDetailed(
+            self.allocator,
+            client,
+            repo.owner,
+            repo.name,
+            token,
+            &rate_reset,
+        ) catch |err| {
+            const owned = releaseErrorMessage(self.allocator, err, rate_reset);
+            defer if (owned) |m| self.allocator.free(m);
+            self.markError(repo.owner, repo.name, owned orelse "Couldn't complete the update. Try again.");
+            if (single) self.pushFinalState();
+            return;
+        };
         defer {
             self.allocator.free(fetched.tag);
             self.allocator.free(fetched.name);
             self.allocator.free(fetched.url);
         }
 
-        const mods = install.modsDir(self.allocator, minecraft_dir) catch |err| {
-            return std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch unreachable;
+        // A repo with no recorded install is a missing mod: surface the tag
+        // the UI can show as "Available release vX".
+        self.setFetched(repo.owner, repo.name, fetched.tag, repo.installedVersion == null);
+
+        const mods = install.modsDir(self.allocator, minecraft_dir) catch {
+            self.markError(repo.owner, repo.name, app_error_write);
+            if (single) self.pushFinalState();
+            return;
         };
         defer self.allocator.free(mods);
 
-        const jar_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ mods, fetched.name }) catch unreachable;
+        const jar_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ mods, fetched.name }) catch {
+            self.markError(repo.owner, repo.name, app_error_write);
+            if (single) self.pushFinalState();
+            return;
+        };
         defer self.allocator.free(jar_path);
         const jar_exists = if (std.Io.Dir.cwd().access(client.io, jar_path, .{})) true else |_| false;
 
@@ -442,23 +716,39 @@ pub const App = struct {
         const version_matches = std.mem.eql(u8, repo.installedVersion orelse "", fetched.tag) and
             std.mem.eql(u8, repo.installedJar orelse "", fetched.name);
         if (version_matches and jar_exists) {
-            return self.allocator.dupe(u8, "up to date") catch unreachable;
+            self.markSuccess(repo.owner, repo.name, "up to date");
+            if (single) self.pushFinalState();
+            return;
         }
 
-        install.ensureModsDir(minecraft_dir) catch |err| {
-            return std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch unreachable;
+        install.ensureModsDir(minecraft_dir) catch {
+            self.markError(repo.owner, repo.name, app_error_write);
+            if (single) self.pushFinalState();
+            return;
         };
 
-        const tmp_path = std.fmt.allocPrint(self.allocator, "{s}/{s}.tmp", .{ mods, fetched.name }) catch unreachable;
+        const tmp_path = std.fmt.allocPrint(self.allocator, "{s}/{s}.tmp", .{ mods, fetched.name }) catch {
+            self.markError(repo.owner, repo.name, app_error_write);
+            if (single) self.pushFinalState();
+            return;
+        };
         defer {
             self.allocator.free(tmp_path);
             // No-op after a successful placeJar (file was moved).
             std.Io.Dir.cwd().deleteFile(client.io, tmp_path) catch {};
         }
 
-        net.downloadJar(self.allocator, client, fetched.url, tmp_path, token) catch |err| {
-            return std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch unreachable;
+        self.setStage(repo.owner, repo.name, .downloading);
+        if (single) self.pushCurrentState();
+
+        net.downloadJarDetailed(self.allocator, client, fetched.url, tmp_path, token) catch {
+            self.markError(repo.owner, repo.name, app_error_download);
+            if (single) self.pushFinalState();
+            return;
         };
+
+        self.setStage(repo.owner, repo.name, .installing);
+        if (single) self.pushCurrentState();
 
         // Reclaim older jars belonging to this repo before placing the new one.
         if (install.staleJarNames(self.allocator, mods, repo.name, fetched.name)) |stale| {
@@ -473,38 +763,44 @@ pub const App = struct {
             }
         } else |_| {}
 
-        install.placeJar(mods, tmp_path, fetched.name) catch |err| {
-            return std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch unreachable;
+        install.placeJar(mods, tmp_path, fetched.name) catch {
+            self.markError(repo.owner, repo.name, app_error_write);
+            if (single) self.pushFinalState();
+            return;
         };
 
         // Record the new install in the live config under the lock.
-        {
-            self.mutex.lock();
-            defer self.mutex.unlock();
-            for (self.cfg.repos) |*r| {
-                if (std.mem.eql(u8, r.owner, repo.owner) and std.mem.eql(u8, r.name, repo.name)) {
-                    if (r.installedVersion) |v| self.allocator.free(v);
-                    if (r.installedJar) |v| self.allocator.free(v);
-                    r.installedVersion = self.allocator.dupe(u8, fetched.tag) catch null;
-                    r.installedJar = self.allocator.dupe(u8, fetched.name) catch null;
-                    break;
-                }
+        self.mutex.lock();
+        for (self.cfg.repos) |*r| {
+            if (std.mem.eql(u8, r.owner, repo.owner) and std.mem.eql(u8, r.name, repo.name)) {
+                if (r.installedVersion) |v| self.allocator.free(v);
+                if (r.installedJar) |v| self.allocator.free(v);
+                r.installedVersion = self.allocator.dupe(u8, fetched.tag) catch null;
+                r.installedJar = self.allocator.dupe(u8, fetched.name) catch null;
+                break;
             }
         }
+        self.mutex.unlock();
 
-        return std.fmt.allocPrint(self.allocator, "installed {s}", .{fetched.tag}) catch unreachable;
+        var status_buf: [192]u8 = undefined;
+        const status_text = std.fmt.bufPrint(&status_buf, "installed {s}", .{fetched.tag}) catch "installed";
+        self.markSuccess(repo.owner, repo.name, status_text);
+        if (single) self.pushFinalState();
     }
 
-    /// Background thread body: snapshot the repo list, fetch/install each repo
-    /// in turn (per-repo errors become status strings, never abort the loop),
-    /// push fresh state JSON to the UI after each repo, persist at the end.
-    fn refreshWorker(self: *App) void {
-        // Drain-loop contract: `cbStartRefresh` already set `refreshing` true
-        // before spawning this thread (atomically, to guard double-spawn), and
-        // this topmost defer clears it as the very last statement on EVERY
-        // exit path — including the early returns below. `run`'s post-
-        // `webview_run` drain loop spins on this flag, so it can never
-        // destroy the webview while any code in this function is still live.
+    /// Background thread body for both "Update all" and the scoped
+    /// updateRepo/installRepo/retryRepo bindings. With `single_owner` set only
+    /// that repo is processed; otherwise every tracked repo is, in order, and
+    /// one coherent snapshot is published when the batch finishes (independent
+    /// successes are kept even when another repo fails).
+    fn updateWorker(self: *App, single_owner: ?[]const u8, single_name: ?[]const u8) void {
+        const single = single_owner != null and single_name != null;
+
+        // Drain-loop contract: the spawning binding already set `refreshing`
+        // true before spawning this thread (atomically, to guard double-spawn),
+        // and this topmost defer clears it as the very last statement on EVERY
+        // exit path. `run`'s post-`webview_run` drain loop spins on this flag,
+        // so it can never destroy the webview while this function is live.
         defer self.refreshing.store(false, .release);
 
         // --- snapshot under the lock ---
@@ -513,30 +809,35 @@ pub const App = struct {
             self.mutex.unlock();
             return;
         };
-        defer self.allocator.free(minecraft_dir);
         const token = if (self.cfg.githubToken) |t| self.allocator.dupe(u8, t) catch null else null;
-        defer if (token) |t| self.allocator.free(t);
-        const repos = self.allocator.alloc(Repo, self.cfg.repos.len) catch {
+
+        var wanted: usize = 0;
+        for (self.cfg.repos) |r| {
+            if (single) {
+                if (std.mem.eql(u8, r.owner, single_owner.?) and std.mem.eql(u8, r.name, single_name.?)) wanted += 1;
+            } else {
+                wanted += 1;
+            }
+        }
+        const repos = self.allocator.alloc(Repo, wanted) catch {
             self.mutex.unlock();
+            self.allocator.free(minecraft_dir);
+            if (token) |t| self.allocator.free(t);
             return;
         };
-        for (self.cfg.repos, repos) |src, *dst| {
-            dst.* = dupeRepo(self.allocator, src) catch {
-                self.mutex.unlock();
-                return; // OOM mid-snapshot: leak the partial copy, stop refreshing
-            };
+        var built: usize = 0;
+        for (self.cfg.repos) |r| {
+            if (single and !(std.mem.eql(u8, r.owner, single_owner.?) and std.mem.eql(u8, r.name, single_name.?))) continue;
+            repos[built] = dupeRepo(self.allocator, r) catch break;
+            built += 1;
         }
         self.mutex.unlock();
-        defer for (repos) |r| freeRepoOwned(self.allocator, r);
 
-        const statuses = self.allocator.alloc(RepoStatus, repos.len) catch return;
-        var statuses_built: usize = 0;
-        defer self.allocator.free(statuses);
+        defer self.allocator.free(minecraft_dir);
+        defer if (token) |t| self.allocator.free(t);
         defer {
-            for (statuses[0..statuses_built]) |s| {
-                self.allocator.free(s.status);
-                if (s.latest) |l| self.allocator.free(l);
-            }
+            for (repos[0..built]) |r| freeRepoOwned(self.allocator, r);
+            self.allocator.free(repos);
         }
 
         // One HTTP client for the whole run (struct literal; no init fn).
@@ -544,22 +845,37 @@ pub const App = struct {
         var client: std.http.Client = .{ .allocator = self.allocator, .io = threaded.io() };
         defer client.deinit();
 
-        for (repos, 0..) |repo, i| {
-            var latest: ?[]const u8 = null;
-            const status = self.refreshRepo(&client, minecraft_dir, token, repo, &latest);
-            statuses[i] = .{ .owner = repo.owner, .name = repo.name, .status = status, .latest = latest };
-            statuses_built = i + 1;
-
-            self.mutex.lock();
-            const json = buildStateJson(self.allocator, &self.cfg, statuses[0..statuses_built]);
-            self.mutex.unlock();
-            if (json) |j| self.pushState(j) else |_| {}
+        for (repos[0..built]) |repo| {
+            self.updateOne(&client, minecraft_dir, token, repo, single);
         }
+
+        // Batch (and the "repo vanished before we started" edge): a single
+        // settled snapshot. Per-stage pushes already happened for single runs.
+        if (!single or built == 0) self.pushFinalState();
 
         // --- persist the updated config ---
         self.mutex.lock();
         defer self.mutex.unlock();
         config_mod.save(&self.cfg) catch {};
+    }
+
+    /// Build the current state JSON and hand it to `pushState`. `force_updating`
+    /// overrides the live `refreshing` flag so a terminal snapshot can say
+    /// "not updating" while the worker is in its final bookkeeping.
+    fn pushCurrentStateFlag(self: *App, force_updating: ?bool) void {
+        self.mutex.lock();
+        const updating = force_updating orelse self.refreshing.load(.acquire);
+        const json = buildStateJson(self.allocator, &self.cfg, self.repo_states, updating);
+        self.mutex.unlock();
+        if (json) |j| self.pushState(j) else |_| {}
+    }
+
+    fn pushCurrentState(self: *App) void {
+        self.pushCurrentStateFlag(null);
+    }
+
+    fn pushFinalState(self: *App) void {
+        self.pushCurrentStateFlag(false);
     }
 
     /// Hand `json` (an already-built state blob) to the GUI thread, which
@@ -633,14 +949,51 @@ fn firstStringArg(app: *App, req: [*c]const u8, out: *[]const u8) bool {
     return true;
 }
 
-/// getConfig() → full state JSON (statuses empty until a refresh fills them).
+/// Pull two strings out of the bind callback's JSON args array (`["a","b"]`),
+/// used by updateRepo/installRepo/retryRepo(owner, name). On success the
+/// caller owns both dupes.
+fn twoStringArgs(app: *App, req: [*c]const u8, first: *[]const u8, second: *[]const u8) bool {
+    const parsed = std.json.parseFromSlice([]const []const u8, app.allocator, std.mem.span(req), .{}) catch return false;
+    defer parsed.deinit();
+    if (parsed.value.len < 2) return false;
+    const a = app.allocator.dupe(u8, parsed.value[0]) catch return false;
+    const b = app.allocator.dupe(u8, parsed.value[1]) catch {
+        app.allocator.free(a);
+        return false;
+    };
+    first.* = a;
+    second.* = b;
+    return true;
+}
+
+/// `{"ok":true}` / `{"ok":false,"error":"..."}` for the OS-helper bindings.
+fn respondResult(app: *App, id: [*c]const u8, ok: bool, message: []const u8) void {
+    if (ok) {
+        respond(app, id, "{\"ok\":true}");
+        return;
+    }
+    const json = std.fmt.allocPrint(app.allocator, "{{\"ok\":false,\"error\":\"{s}\"}}", .{message}) catch {
+        respond(app, id, "{\"ok\":false,\"error\":\"Operation failed.\"}");
+        return;
+    };
+    defer app.allocator.free(json);
+    respond(app, id, json);
+}
+
+/// getConfig() → full state JSON (per-repo rows default to idle until an
+/// update fills them).
 fn cbGetConfig(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
     _ = req;
     const app = appFromArg(arg);
 
     app.mutex.lock();
     defer app.mutex.unlock();
-    const json = buildStateJson(app.allocator, &app.cfg, &.{}) catch {
+    const json = buildStateJson(
+        app.allocator,
+        &app.cfg,
+        app.repo_states,
+        app.refreshing.load(.acquire),
+    ) catch {
         respond(app, id, "null");
         return;
     };
@@ -648,7 +1001,9 @@ fn cbGetConfig(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.
     respond(app, id, json);
 }
 
-/// setMinecraftDir(path) → "true"/"false"; persists.
+/// setMinecraftDir(path) → "true"/"false"; persists. Rejected while an update
+/// worker is running (the worker snapshots the dir when it starts), and the
+/// path is validated by the UI through `validateFolder` before calling.
 fn cbSetMinecraftDir(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
     const app = appFromArg(arg);
     var path: []const u8 = undefined;
@@ -659,9 +1014,23 @@ fn cbSetMinecraftDir(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) call
 
     app.mutex.lock();
     defer app.mutex.unlock();
+    if (path.len == 0 or app.refreshing.load(.acquire)) {
+        app.allocator.free(path);
+        respond(app, id, "false");
+        return;
+    }
     const old = app.cfg.minecraftDir;
     app.cfg.minecraftDir = path; // ownership transferred to the config
     app.allocator.free(old);
+
+    // A hand-typed folder is no longer a launcher profile pick.
+    if (app.cfg.selectedProfile) |old_sp| {
+        app.allocator.free(old_sp.kind);
+        app.allocator.free(old_sp.name);
+        app.allocator.free(old_sp.gameDir);
+        app.cfg.selectedProfile = null;
+    }
+
     if (config_mod.save(&app.cfg)) {
         respond(app, id, "true");
     } else |_| {
@@ -690,10 +1059,18 @@ fn cbListLaunchers(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callco
 
 /// selectProfile(gameDir) → "true"/"false"; sets minecraftDir + selectedProfile
 /// if (and only if) the gameDir matches a discovered profile, then persists.
+/// Rejected while an update worker is running.
 fn cbSelectProfile(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
     const app = appFromArg(arg);
     var game_dir: []const u8 = undefined;
     if (!firstStringArg(app, req, &game_dir)) {
+        respond(app, id, "false");
+        return;
+    }
+
+    // Cheap pre-check before scanning the filesystem.
+    if (app.refreshing.load(.acquire)) {
+        app.allocator.free(game_dir);
         respond(app, id, "false");
         return;
     }
@@ -722,6 +1099,12 @@ fn cbSelectProfile(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callco
     app.mutex.lock();
     defer app.mutex.unlock();
 
+    if (app.refreshing.load(.acquire)) {
+        app.allocator.free(game_dir);
+        respond(app, id, "false");
+        return;
+    }
+
     const kind = app.allocator.dupe(u8, @tagName(p.kind)) catch {
         app.allocator.free(game_dir);
         respond(app, id, "false");
@@ -729,6 +1112,15 @@ fn cbSelectProfile(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callco
     };
     const name = app.allocator.dupe(u8, p.name) catch {
         app.allocator.free(kind);
+        app.allocator.free(game_dir);
+        respond(app, id, "false");
+        return;
+    };
+    // `selectedProfile.gameDir` must be its OWN allocation: `freeConfig` frees
+    // it independently of `minecraftDir`.
+    const profile_dir = app.allocator.dupe(u8, game_dir) catch {
+        app.allocator.free(kind);
+        app.allocator.free(name);
         app.allocator.free(game_dir);
         respond(app, id, "false");
         return;
@@ -742,7 +1134,7 @@ fn cbSelectProfile(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callco
         app.allocator.free(old_sp.name);
         app.allocator.free(old_sp.gameDir);
     }
-    app.cfg.selectedProfile = .{ .kind = kind, .name = name, .gameDir = game_dir };
+    app.cfg.selectedProfile = .{ .kind = kind, .name = name, .gameDir = profile_dir };
 
     if (config_mod.save(&app.cfg)) {
         respond(app, id, "true");
@@ -767,6 +1159,7 @@ fn cbRestoreDefaults(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) call
 
     freeRepoSlice(app.allocator, app.cfg.repos);
     app.cfg.repos = seeded; // ownership transferred to the config
+    app.pruneStatesLocked();
 
     if (config_mod.save(&app.cfg)) {
         respond(app, id, "true");
@@ -791,7 +1184,8 @@ fn cbAddRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c)
     respond(app, id, if (ok) "true" else "false");
 }
 
-/// removeRepo("owner/name") → "true"/"false"; filters + persists.
+/// removeRepo("owner/name") → "true"/"false"; filters + persists. A repo the
+/// running worker is currently touching is rejected.
 fn cbRemoveRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
     const app = appFromArg(arg);
     var spec: []const u8 = undefined;
@@ -803,7 +1197,18 @@ fn cbRemoveRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(
 
     app.mutex.lock();
     defer app.mutex.unlock();
+
+    if (parseOwnerName(spec)) |parts| {
+        if (app.write_owner) |wo| {
+            if (std.mem.eql(u8, wo, parts[0]) and std.mem.eql(u8, app.write_name orelse "", parts[1])) {
+                respond(app, id, "false"); // mid-write
+                return;
+            }
+        }
+    }
+
     const ok = app.removeRepo(spec) catch false;
+    if (ok) app.pruneStatesLocked();
     respond(app, id, if (ok) "true" else "false");
 }
 
@@ -817,7 +1222,7 @@ fn cbStartRefresh(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callcon
         respond(app, id, "false"); // already running
         return;
     }
-    const t = std.Thread.spawn(.{}, refreshWorkerEntry, .{app}) catch {
+    const t = std.Thread.spawn(.{}, updateWorkerEntry, .{ app, UpdateJob{} }) catch {
         app.refreshing.store(false, .release);
         respond(app, id, "false");
         return;
@@ -826,8 +1231,152 @@ fn cbStartRefresh(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callcon
     respond(app, id, "true");
 }
 
-fn refreshWorkerEntry(app: *App) void {
-    app.refreshWorker();
+/// Heap-owned arguments for `updateWorkerEntry` (slices must outlive the
+/// calling bind callback, so they are duped and freed by the entry function).
+const UpdateJob = struct {
+    owner: ?[]const u8 = null,
+    name: ?[]const u8 = null,
+};
+
+fn updateWorkerEntry(app: *App, job: UpdateJob) void {
+    defer if (job.owner) |v| app.allocator.free(v);
+    defer if (job.name) |v| app.allocator.free(v);
+    app.updateWorker(job.owner, job.name);
+}
+
+// ============================================================================
+// Scoped repo update + OS helper bindings
+// ============================================================================
+
+const RepoAction = enum { update, install, retry };
+
+/// updateRepo/installRepo/retryRepo(owner, name) → "true" if a scoped worker
+/// was spawned, "false" if the repo isn't tracked or an update is in flight.
+/// All three run the identical staged pipeline; `retry` also clears the row's
+/// previous error copy first.
+fn startRepoUpdate(app: *App, id: [*c]const u8, req: [*c]const u8, action: RepoAction) void {
+    var owner: []const u8 = undefined;
+    var name: []const u8 = undefined;
+    if (!twoStringArgs(app, req, &owner, &name)) {
+        respond(app, id, "false");
+        return;
+    }
+    defer app.allocator.free(owner);
+    defer app.allocator.free(name);
+
+    if (owner.len == 0 or name.len == 0) {
+        respond(app, id, "false");
+        return;
+    }
+
+    app.mutex.lock();
+    if (!app.repoIsTrackedLocked(owner, name)) {
+        app.mutex.unlock();
+        respond(app, id, "false");
+        return;
+    }
+    if (action == .retry) {
+        if (app.stateSlotLocked(owner, name)) |s| {
+            app.setOwnedLocked(&s.err, null);
+            s.stage = .idle;
+        }
+    }
+    app.mutex.unlock();
+
+    if (app.refreshing.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
+        respond(app, id, "false"); // one worker at a time
+        return;
+    }
+    const owner_copy = app.allocator.dupe(u8, owner) catch {
+        app.refreshing.store(false, .release);
+        respond(app, id, "false");
+        return;
+    };
+    const name_copy = app.allocator.dupe(u8, name) catch {
+        app.allocator.free(owner_copy);
+        app.refreshing.store(false, .release);
+        respond(app, id, "false");
+        return;
+    };
+    const t = std.Thread.spawn(.{}, updateWorkerEntry, .{ app, UpdateJob{ .owner = owner_copy, .name = name_copy } }) catch {
+        app.allocator.free(owner_copy);
+        app.allocator.free(name_copy);
+        app.refreshing.store(false, .release);
+        respond(app, id, "false");
+        return;
+    };
+    t.detach();
+    respond(app, id, "true");
+}
+
+fn cbUpdateRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    startRepoUpdate(appFromArg(arg), id, req, .update);
+}
+
+fn cbInstallRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    startRepoUpdate(appFromArg(arg), id, req, .install);
+}
+
+fn cbRetryRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    startRepoUpdate(appFromArg(arg), id, req, .retry);
+}
+
+/// openUrl(url) → {"ok":true} or {"ok":false,"error":"..."}.
+fn cbOpenUrl(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    const app = appFromArg(arg);
+    var url: []const u8 = undefined;
+    if (!firstStringArg(app, req, &url)) {
+        respondResult(app, id, false, "Couldn't open browser.");
+        return;
+    }
+    defer app.allocator.free(url);
+
+    os.openUrl(url) catch {
+        respondResult(app, id, false, "Couldn't open browser.");
+        return;
+    };
+    respondResult(app, id, true, "");
+}
+
+/// copyToClipboard(text) → {"ok":true} or {"ok":false,"error":"..."}.
+fn cbCopyToClipboard(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    const app = appFromArg(arg);
+    var text: []const u8 = undefined;
+    if (!firstStringArg(app, req, &text)) {
+        respondResult(app, id, false, "Couldn't copy.");
+        return;
+    }
+    defer app.allocator.free(text);
+
+    os.copyToClipboard(text) catch {
+        respondResult(app, id, false, "Couldn't copy.");
+        return;
+    };
+    respondResult(app, id, true, "");
+}
+
+/// validateFolder(path) → {"valid":true} or {"valid":false,"error":"..."}.
+fn cbValidateFolder(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    const app = appFromArg(arg);
+    var path: []const u8 = undefined;
+    if (!firstStringArg(app, req, &path)) {
+        respond(app, id, "{\"valid\":false,\"error\":\"Folder not found.\"}");
+        return;
+    }
+    defer app.allocator.free(path);
+
+    if (path.len == 0) {
+        respond(app, id, "{\"valid\":false,\"error\":\"Folder not found.\"}");
+        return;
+    }
+    const valid = os.validateFolderWritable(path) catch {
+        respond(app, id, "{\"valid\":false,\"error\":\"Couldn't check that folder.\"}");
+        return;
+    };
+    respond(app, id, if (valid)
+        "{\"valid\":true}"
+    else
+        "{\"valid\":false,\"error\":\"Folder doesn't exist or isn't writable.\"}");
 }
 
 // ============================================================================
@@ -894,6 +1443,59 @@ fn freeRepoSlice(allocator: Allocator, repos: []Repo) void {
     allocator.free(repos);
 }
 
+/// Free an owned `RepoStatus` stored on `App.repo_states` (every string in
+/// such a row is allocator-owned; borrowed rows handed to `buildStateJson`
+/// in tests are never passed here).
+fn freeStatus(allocator: Allocator, s: RepoStatus) void {
+    allocator.free(s.owner);
+    allocator.free(s.name);
+    allocator.free(s.status);
+    if (s.latest) |v| allocator.free(v);
+    if (s.err) |v| allocator.free(v);
+    if (s.available_version) |v| allocator.free(v);
+}
+
+/// Format GitHub's rate-limit reset epoch as the UI copy. Returns null on OOM
+/// or when no reset time is available.
+fn formatRateLimitReset(allocator: Allocator, reset: ?i64) ?[]const u8 {
+    const secs = reset orelse
+        return allocator.dupe(u8, "GitHub rate limit reached. Try again later.") catch null;
+    if (secs <= 0)
+        return allocator.dupe(u8, "GitHub rate limit reached. Try again later.") catch null;
+
+    const es: std.time.epoch.EpochSeconds = .{ .secs = @intCast(secs) };
+    const yd = es.getEpochDay().calculateYearDay();
+    const md = yd.calculateMonthDay();
+    const ds = es.getDaySeconds();
+    return std.fmt.allocPrint(
+        allocator,
+        "GitHub rate limit reached. Try again after {d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2} UTC.",
+        .{
+            yd.year,
+            @backingInt(md.month),
+            md.day_index + 1,
+            ds.getHoursIntoDay(),
+            ds.getMinutesIntoHour(),
+        },
+    ) catch null;
+}
+
+/// Map a network/release error to the exact user-facing copy. Returns an
+/// allocator-owned string (caller frees) or null when the caller should use
+/// its generic fallback (OOM / unknown).
+fn releaseErrorMessage(allocator: Allocator, err: anyerror, rate_reset: ?i64) ?[]const u8 {
+    const copy: []const u8 = switch (err) {
+        error.NotFound => "Repository not found or unavailable. Check owner/name.",
+        error.RateLimited => return formatRateLimitReset(allocator, rate_reset),
+        error.NoCompatibleJar => "No compatible .jar release found for this install.",
+        error.DownloadFailed => "Couldn't download. Check your connection and retry.",
+        error.Offline, error.InvalidPayload => "Couldn't reach GitHub. Check your connection and retry.",
+        error.OutOfMemory => return null,
+        else => return null,
+    };
+    return allocator.dupe(u8, copy) catch null;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -907,7 +1509,7 @@ test "buildStateJson: installed repo row carries owner, name, version, jar, stat
         .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2" },
     };
 
-    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
+    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses, false);
     defer std.testing.allocator.free(json);
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"minecraftDir\"") != null);
@@ -929,7 +1531,7 @@ test "buildStateJson: no-releases row plus null installedVersion serializes as n
         .{ .owner = "desocketed", .name = "surprise", .status = "no releases" },
     };
 
-    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
+    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses, false);
     defer std.testing.allocator.free(json);
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"surprise\"") != null);
@@ -953,7 +1555,7 @@ test "buildStateJson: statuses pair by owner+name, not by index" {
         .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2", .latest = "v0.1.2" },
     };
 
-    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
+    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses, false);
     defer std.testing.allocator.free(json);
 
     // Brief's four substrings, all in ONE JSON blob:
@@ -967,8 +1569,8 @@ test "buildStateJson: statuses pair by owner+name, not by index" {
 
     // Rows come out in cfg.repos order, each carrying the status that
     // matched ITS owner+name (not whatever happened to share an index):
-    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\",\"latestVersion\":\"v0.1.2\"}";
-    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\",\"latestVersion\":null}";
+    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\",\"latestVersion\":\"v0.1.2\",\"stage\":\"idle\",\"error\":null,\"availableVersion\":null}";
+    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\",\"latestVersion\":null,\"stage\":\"idle\",\"error\":null,\"availableVersion\":null}";
     const gore_at = std.mem.indexOf(u8, json, gore_row) orelse return error.TestUnexpectedResult;
     const surprise_at = std.mem.indexOf(u8, json, surprise_row) orelse return error.TestUnexpectedResult;
     try std.testing.expect(gore_at < surprise_at);
@@ -978,7 +1580,7 @@ test "buildStateJson: repo without a status row gets an empty status" {
     var repos = [1]Repo{.{ .owner = "a", .name = "b" }};
     const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
 
-    const json = try buildStateJson(std.testing.allocator, &cfg, &.{});
+    const json = try buildStateJson(std.testing.allocator, &cfg, &.{}, false);
     defer std.testing.allocator.free(json);
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"\"") != null);

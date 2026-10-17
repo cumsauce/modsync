@@ -1,8 +1,8 @@
 // Renders the modsync app icon at 1024x1024.
 //
 // Drawn with CoreGraphics rather than shipped as a binary blob so the mark is
-// reproducible and reviewable in the repo: a violet rounded tile carrying two
-// opposed arrows, which reads as "sync" even at 16px.
+// reproducible and reviewable in the repo: an Arctic Cyan rounded tile carrying
+// two opposed arrows, which reads as "sync" even at 16px.
 //
 // Usage: swift scripts/make-icon.swift <out.png>
 
@@ -38,9 +38,9 @@ func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor 
     CGColor(red: r / 255, green: g / 255, blue: b / 255, alpha: a)
 }
 
-let accent = rgb(130, 115, 216)      // #8273D8
-let tileTop = rgb(38, 32, 60)        // #26203C
-let tileBottom = rgb(11, 10, 16)     // #0B0A10
+let accent = rgb(125, 227, 245)      // #7DE3F5
+let tileTop = rgb(11, 17, 22)        // #0B1116
+let tileBottom = rgb(9, 13, 16)      // #090D10
 
 // macOS icon grid: 824x824 artwork centred on a 1024 canvas.
 let tileRect = CGRect(x: 100, y: 100, width: 824, height: 824)
@@ -67,10 +67,10 @@ ctx.drawLinearGradient(
     options: []
 )
 
-// Soft violet bloom in the upper third, so the tile has a light source.
+// Soft cyan bloom in the upper third, so the tile has a light source.
 let bloom = CGGradient(
     colorsSpace: space,
-    colors: [rgb(110, 86, 207, 0.34), rgb(110, 86, 207, 0)] as CFArray,
+    colors: [rgb(0, 200, 242, 0.30), rgb(0, 200, 242, 0)] as CFArray,
     locations: [0, 1]
 )!
 ctx.drawRadialGradient(

@@ -8,6 +8,9 @@ Built with [Zig](https://ziglang.org) + the vendored
 window (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) with no
 bundled browser engine. Single ~1.7 MB binary (macOS, ReleaseSafe).
 
+v0.7.0 ships the **Arctic Cyan** theme: a dark, single-column window with a cyan
+accent, status-coloured rows, and an inline ⋯ menu per tracked repo.
+
 ![modsync window](docs/images/modsync.png)
 
 ## Install
@@ -83,11 +86,16 @@ build with).
 ## What it does
 
 - Point it at a Minecraft folder (e.g. `~/Library/Application Support/minecraft`).
-- It tracks a list of GitHub repos and, on **Refresh**, downloads the newest
+- It tracks a list of GitHub repos and, on **Update all**, downloads the newest
   release jar from each into `<minecraft>/mods/`.
 - When it installs a new version of a mod, it removes that mod's older jars
   (`{repo}-*.jar`) and leaves every other file in `mods/` untouched.
 - Already-up-to-date mods are skipped (same tag **and** the jar is present).
+- Rows are grouped by status — **Up to date**, **Update available**,
+  **Not installed**, **Not checked**, **Errors** — with problem groups first,
+  instead of being grouped by author.
+- Updates run one repo at a time and each row reports its stage: Checking →
+  Downloading → Installing → Success/Error.
 - Seed repos: `cumsauce/gore`, `cumsauce/foley`, `cumsauce/earshot`,
   `cumsauce/stalker`, `cumsauce/aorta`, `desocketed/yakvc` — configurable via
   `defaults.json` (see Config below), and you can add or remove any repo.
@@ -125,9 +133,20 @@ Then launch it directly:
   is ever touched; launcher metadata is never written.
 - **Minecraft folder** — type the path and press **Save** (manual alternative to
   picking a profile).
-- **Refresh all** — fetches each tracked repo's newest release and installs it.
-  Each row shows its status (installed tag / up to date / no releases / error).
-- **Tracked mods** — add a repo as `owner/name`, or **Remove** one.
+- **Update all** — fetches each tracked repo's newest release and installs it
+  through a staged pipeline: Checking → Downloading → Installing →
+  Success/Error, reported on each row. The button reads **Updating…** and is
+  disabled during a run; the install can't be switched while updates run.
+- **Tracked mods** — grouped by status rather than author: **Up to date**,
+  **Update available**, **Not installed**, **Not checked**, and **Errors**,
+  with only non-empty groups drawn. Problems come first; each row shows its
+  installed version, or the available release for a mod that isn't installed.
+- **⋯ menu** — per-repo actions: **Update mod** / **Install mod** / **Retry**
+  depending on the row's status, **View on GitHub**, **Copy repo name**, and
+  **Remove from tracking**. Removing asks for confirmation and keeps the
+  installed jars in `mods/`.
+- **Add a repo** — enter `owner/name` and press **Add**; malformed names and
+  duplicates are rejected inline.
 
 ## Config
 
@@ -167,14 +186,24 @@ src/config.zig    Config/Repo model, JSON persistence, seeded repos, config path
 src/github.zig    release JSON parsing + deterministic jar-asset selection
 src/net.zig       GitHub fetch + jar download over std.http (stdlib only)
 src/install.zig   mods-folder ops: mkdir, stale-jar detection, place jar
-src/app.zig       webview bridge (JS <-> Zig), background refresh worker
+src/app.zig       webview bridge (JS <-> Zig), staged background update worker
+src/os.zig        platform helpers: open URL, clipboard, folder validation
 src/ui.html       the UI (vanilla JS, embedded via @embedFile + webview_set_html)
 lib/webview/      vendored webview/webview C library (see TOOLCHAIN.md)
 ```
 
+## Known limitations
+
+- The macOS `.app` is ad-hoc signed but **not notarised**, so Gatekeeper warns
+  on first launch (see Install above).
+- The Windows build is compiled and linked in CI but has not been
+  runtime-tested.
+- The clipboard and open-in-browser helpers behind the ⋯ menu are untested on
+  Linux and Windows.
+
 ## Notes
 
-- v1 target is macOS (verified: builds, launches, live-fetches). Path handling
-  and the webview bootstrap are the only platform-specific code, so Windows and
-  Linux builds are a natural next step.
+- v0.7.0 is verified on macOS (builds, launches, live-fetches). Path handling,
+  the webview bootstrap, and the `src/os.zig` helpers are the only
+  platform-specific code.
 - Implementation plan and design doc live under `docs/superpowers/`.

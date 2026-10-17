@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>modsync</title>
 <script>
 // Defined first and defensively: the Zig side evals
@@ -17,6 +18,8 @@ window.renderState = function (state) {
 };
 </script>
 <style>
+/* Embedded Inter, subset to the UI's Latin range. Kept inline so the window
+   makes no network requests of any kind. */
 @font-face {
   font-family: "Inter";
   font-style: normal;
@@ -26,81 +29,85 @@ window.renderState = function (state) {
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Uber × Discord: flush structure, hairline dividers, tight type
-   (Uber) with a violet-black palette, rounded touch targets, tinted
-   status pills and soft focus glows (Discord). One system, no web-page
-   chrome: no wordmark hero, no floating cards. */
 :root {
-  --bg: #0B0A10;
-  --field: #1C1826;
-  --line: #2A2438;
-  --divider: rgba(255,255,255,0.07);
-  --hover: rgba(255,255,255,0.035);
+  --bg: #090D10;
+  --titlebar: #0D1317;
+  --field: #111B21;
+  --tile: #171F25;
+  --line: #263B44;
+  --input-border: #303D43;
+  --primary: #00C8F247;
+  --primary-border: #28505E;
   --text: #F3F1FA;
-  --dim: #A79FBC;
-  --faint: #8A83A0;
-  --primary: #6E56CF;
-  --primary-hover: #8273D8;
-  --fuchsia: #8273D8;
-  --ok: #4ADE80;
-  --ok-tint: rgba(74,222,128,0.12);
-  --err: #FB7185;
-  --err-tint: rgba(251,113,133,0.12);
-  --mute-tint: rgba(167,159,188,0.10);
+  --dim: #A7A7B5;
+  --faint: #8E8E96;
+  --chevron: #9ABFCB;
+  --latest: #22C55E;
+  --outdated: #F6B84D;
+  --missing: #F9708A;
+  --keyline: #FFFFFF14;
+  --tile-border: #333337;
+  --focus: #80D5EC;
+
+  --titlebar-h: 34px;
+  --install-h: 76px;
+  --toolbar-h: 56px;
+  --tools-h: 88px;
+  --inset: 20px;
+  --picker-w: 480px;
+  --picker-h: 56px;
+  --row-h: 40px;
+  --tile-size: 24px;
+  --edge-w: 2px;
+  --edge-h: 25px;
+  --control-h: 32px;
+  --radius: 4px;
+  --row-gap: 10px;
+  --section-gap: 14px;
+  --input-add-gap: 8px;
+
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
+
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { max-width: 100%; }
+html, body { width: 520px; height: 640px; }
 body {
   margin: 0;
-  padding: 0;
-  overflow-x: hidden;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 var(--sans);
+  font: 13px/1.45 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
+button, input { font-family: inherit; }
 button { user-select: none; -webkit-user-select: none; }
+h1, h2, h3, p { margin: 0; }
 
-/* flush sections, full-bleed hairline dividers (Uber) */
-.section { padding: 8px 16px 10px; }
-.section-head {
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* ---------------------------------------------------------------- shell */
+.chrome {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
+  flex-direction: column;
+  height: 100vh;
+  width: 520px;
+  min-height: 0;
 }
-.section-head h2 {
-  font: 600 13px/1.3 var(--sans);
-  letter-spacing: 0.01em;
-  color: var(--text);
-  margin: 0;
-}
-.head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-/* fixed width so the label swapping to "Refreshing…" doesn't shift the
-   adjacent button out from under the pointer. */
-#refresh { min-width: 98px; }
-.head-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.summary {
-  font: 11.5px/1.4 var(--mono);
-  color: var(--faint);
-  margin: 0;
-  white-space: nowrap;
-}
-.summary[hidden] { display: none; }
 
-/* integrated title bar: the UI's own top strip (the native bar is
-   transparent and textless; traffic lights overlay the left spacer).
-   Non-interactive and unselectable so background drags start here. */
+/* Native traffic lights are drawn over the left 68px of this strip. */
 .topbar {
   display: flex;
   align-items: center;
-  height: 34px;
-  flex: none;
-  border-bottom: 1px solid var(--divider);
+  flex: 0 0 var(--titlebar-h);
+  height: var(--titlebar-h);
+  border-bottom: 1px solid var(--keyline);
+  background: var(--titlebar);
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
@@ -111,63 +118,50 @@ button { user-select: none; -webkit-user-select: none; }
   margin: 0;
   text-align: center;
   font: 600 13px/1 var(--sans);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.04em;
   color: var(--dim);
 }
 
-/* Active-install selector: the app's context. Sticky so it stays the anchor
-   while the list scrolls, and glowing so it reads as the live selection. */
-/* Sticky chrome: the title bar and the selector travel together, so the
-   traffic-light spacer stays in place once the page scrolls. Sticking the
-   selector alone would slide it under the native window buttons. */
-.chrome {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  background: rgba(11,10,16,0.92);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-}
-.context-bar {
-  padding: 7px 16px 8px;
-  border-bottom: 1px solid var(--divider);
+/* ------------------------------------------------------------- install */
+.install-section {
+  position: relative;
+  flex: 0 0 var(--install-h);
+  height: var(--install-h);
+  padding: 10px var(--inset);
+  border-bottom: 1px solid var(--keyline);
+  background: var(--bg);
+  z-index: 30;
 }
 .install-picker {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 10px;
-  border: 1px solid rgba(110,86,207,0.42);
-  border-radius: 8px;
-  background: linear-gradient(180deg, rgba(110,86,207,0.14), rgba(110,86,207,0.05));
-  color: var(--text);
-  font: inherit;
-  text-align: left;
+  gap: 12px;
+  width: var(--picker-w);
+  height: var(--picker-h);
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(0,200,242,0.07), rgba(0,200,242,0.02));
   cursor: pointer;
-  box-shadow: 0 0 12px rgba(110,86,207,0.10);
-  transition: box-shadow .18s ease, border-color .18s ease;
+  transition: border-color .14s linear, background-color .14s linear;
 }
-.install-picker:hover {
-  border-color: rgba(130,115,216,0.7);
-  box-shadow: 0 0 16px rgba(110,86,207,0.18);
+.install-picker:hover { border-color: var(--primary-border); }
+.install-picker[aria-expanded="true"] { border-color: var(--focus); }
+.install-picker[aria-disabled="true"] { opacity: .55; cursor: default; }
+.install-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
-.install-picker[aria-expanded="true"] {
-  border-color: var(--primary-hover);
-  box-shadow: 0 0 0 1px rgba(130,115,216,0.45), 0 0 18px rgba(110,86,207,0.20);
+.install-label {
+  font: 600 10px/1.2 var(--sans);
+  letter-spacing: 0.09em;
+  color: var(--dim);
 }
-.install-glyph {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(140deg, #8273D8, #5B45B8);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.28);
-}
-.install-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
-.install-label { font: 500 10px/1.3 var(--sans); color: var(--faint); }
-.install-value {
-  font: 600 13px/1.35 var(--sans);
+.install-path {
+  font: 500 13px/1.25 var(--sans);
   color: var(--text);
   min-width: 0;
   white-space: nowrap;
@@ -176,850 +170,2026 @@ button { user-select: none; -webkit-user-select: none; }
 }
 .chevron {
   flex: none;
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 5px solid var(--dim);
+  width: 14px;
+  height: 14px;
+  color: var(--chevron);
   transition: transform .16s ease;
 }
 .install-picker[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+
+/* Overlay: never participates in layout, so opening it cannot push the
+   toolbar or list down. */
 .install-menu {
   position: absolute;
-  left: 16px;
-  right: 16px;
-  top: 100%;
-  margin-top: 6px;
-  padding: 6px;
+  left: var(--inset);
+  top: 70px;
+  width: var(--picker-w);
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #12101A;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+  border-radius: var(--radius);
+  background: var(--field);
+  box-shadow: 0 18px 40px rgba(0,0,0,.6);
+  z-index: 60;
+  overflow: hidden;
 }
 .install-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  /* Only the options scroll: the custom-path field and Rescan are the
-     fallback when detection fails, so they must never be scrolled out of
-     reach inside the dropdown. */
-  max-height: 220px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 240px;
   overflow-y: auto;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .install-option {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  padding: 7px 8px;
+  min-height: 44px;
+  padding: 6px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--text);
   text-align: left;
   cursor: pointer;
 }
-.install-option:hover { background: var(--hover); }
+.install-option:hover { background: rgba(255,255,255,0.04); }
 .install-option.selected {
-  background: rgba(110,86,207,0.18);
-  box-shadow: inset 0 0 0 1px rgba(130,115,216,0.35);
+  background: rgba(0,200,242,0.12);
+  box-shadow: inset 0 0 0 1px rgba(0,200,242,0.22);
 }
-.opt-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
-.opt-check { flex: none; color: var(--primary-hover); font: 600 12px/1 var(--sans); }
-.opt-name {
-  font: 500 13px/1.35 var(--sans);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.opt-path {
-  font: 10.5px/1.35 var(--mono);
-  color: var(--faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.install-empty { margin: 6px 8px; font: 12px/1.4 var(--sans); color: var(--faint); }
-.install-custom-label {
-  margin: 8px 8px 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--divider);
-  font: 500 10.5px/1.3 var(--sans);
-  color: var(--faint);
-}
-.install-menu .inline-add { margin-top: 0; }
-.install-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
-
-/* buttons: tiered by style, uniform size; slightly rounded (Discord) */
-.btn {
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 2px;
-  border: none;
-  font: 600 12.5px/1 var(--sans);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background-color .12s linear, color .12s linear, opacity .12s linear, transform .06s linear;
-}
-.btn:active:not(:disabled) { transform: translateY(1px); }
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
-.btn-outline { background: transparent; border: 1px solid var(--line); color: var(--text); }
-.btn-outline:hover:not(:disabled) { background: var(--hover); border-color: var(--faint); }
-.btn-ghost { background: transparent; color: var(--dim); }
-.btn-ghost:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.btn-danger { background: transparent; color: var(--faint); }
-.btn-danger:hover:not(:disabled) { background: var(--err-tint); color: var(--err); }
-.btn:disabled { cursor: default; opacity: .55; }
-
-/* inputs */
-.input {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 32px;
-  padding: 0 11px;
-  border-radius: 8px;
-  background: var(--field);
-  border: 1px solid var(--line);
-  color: var(--text);
-  font: 13px/1.5 var(--sans);
-  appearance: none;
-  -webkit-appearance: none;
-  transition: border-color .12s linear, box-shadow .12s linear;
-}
-.input.mono { font: 12px/1.4 var(--mono); }
-.input::placeholder { color: var(--faint); opacity: 1; }
-.input:focus {
-  border-color: var(--primary-hover);
-  box-shadow: 0 0 0 3px rgba(130,115,216,0.25);
-}
-
-/* messages */
-.msg {
-  font: 13px/1.5 var(--sans);
-  color: var(--dim);
-  margin-top: 8px;
-}
-.msg:empty { display: none; }
-.msg.ok { color: var(--ok); }
-.msg.err {
-  background: var(--err-tint);
-  border-radius: 8px;
-  padding: 8px 12px;
-  color: var(--err);
-}
-
-/* rows: two-line, dense, full-bleed hover (Uber) with tinted pills (Discord) */
-.list { list-style: none; margin: 0; padding: 0; }
-/* per-author group heading (mono, quiet); rules sit between groups only */
-.group-head {
-  margin: 2px -16px 0;
-  padding: 6px 16px 3px;
-  font: 600 10.5px/1.3 var(--mono);
-  color: var(--faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.group-head.sep { border-top: 1px solid var(--divider); }
-.group-head b { font-weight: 600; color: var(--dim); }
-.item {
+.opt-text {
   display: flex;
-  margin: 0 -16px;
-  padding: 4px 16px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.opt-name {
+  font: 500 13px/1.3 var(--sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.opt-meta {
+  font: 11px/1.3 var(--mono);
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.opt-check {
+  flex: none;
+  color: var(--focus);
+  font: 600 12px/1 var(--sans);
+}
+.install-empty {
+  padding: 10px;
+  font: 12px/1.45 var(--sans);
+  color: var(--faint);
+}
+.install-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-top: 1px solid var(--keyline);
+  background: var(--field);
+}
+.footer-label {
+  font: 500 10.5px/1.25 var(--sans);
+  letter-spacing: 0.02em;
+  color: var(--faint);
+}
+.footer-row { display: flex; align-items: center; gap: var(--input-add-gap); }
+.install-footer .btn-ghost { align-self: flex-end; height: 24px; padding: 0 8px; font-size: 11.5px; }
+.field-msg {
+  font: 11px/1.4 var(--sans);
+  color: var(--missing);
+  min-height: 0;
+}
+.field-msg:empty { display: none; }
+
+/* ------------------------------------------------------------- toolbar */
+.toolbar {
+  flex: 0 0 var(--toolbar-h);
+  height: var(--toolbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 var(--inset);
+  border-bottom: 1px solid var(--keyline);
+  background: var(--bg);
+}
+.list-summary { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.heading {
+  font: 600 13px/1.3 var(--sans);
+  letter-spacing: 0.01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+.installed-count {
+  font: 11.5px/1.3 var(--sans);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- list */
+/* The only scroll region in the window. */
+.status-sections {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px var(--inset) 12px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--section-gap);
+  scrollbar-width: thin;
+}
+.status-sections:focus-visible { outline-offset: -2px; }
+.status-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+}
+.section-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+.state-heading {
+  font: 600 10.5px/1.3 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 0;
+}
+.section-count {
+  font: 10.5px/1.3 var(--mono);
+  color: var(--faint);
+  min-width: 14px;
+  text-align: right;
+}
+.section-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+}
+
+.mod-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--row-h);
+  padding: 0 4px 0 0;
+  border-radius: var(--radius);
   transition: background-color .1s linear;
 }
-.item:hover { background: var(--hover); }
-/* per-row Remove is destructive and repetitive: keep it out of the way until
-   the row is hovered or focused, so the data columns stay scannable. */
-.item .btn-danger { opacity: 0; }
-.item:hover .btn-danger,
-.item:focus-within .btn-danger { opacity: 1; }
-@media (hover: none) { .item .btn-danger { opacity: 1; } }
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--mute-tint);
-  font: 10.5px/1.5 var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  flex-shrink: 1;
+.mod-row:hover { background: rgba(255,255,255,0.035); }
+.mod-row:focus-within { background: rgba(255,255,255,0.035); }
+.status-edge {
+  flex: none;
+  width: var(--edge-w);
+  height: var(--edge-h);
+  border-radius: 1px;
+  background: var(--line);
 }
-.chip .dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  flex-shrink: 0;
-}
-.chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-
-/* add-repo sits inline under the list rather than in a section at the bottom
-   of a window that already scrolls — the action stays next to what it acts
-   on. */
-.inline-add { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-
-/* empty states — quiet, actionable */
-.empty { padding: 4px 0 0; }
-.empty-title { font: 600 13.5px/1.4 var(--sans); color: var(--text); margin: 0 0 4px; }
-.empty-body { font: 13px/1.5 var(--sans); color: var(--dim); margin: 0; }
-.empty > :last-child { margin-bottom: 0; }
-
-:focus-visible { outline: 2px solid var(--fuchsia); outline-offset: 2px; }
-
-/* dark, thin scrollbar — the platform default is a bright bar on near-black */
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(167,159,188,0.22);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-  border-radius: 999px;
-}
-::-webkit-scrollbar-thumb:hover { background: rgba(167,159,188,0.38); background-clip: padding-box; }
-
-/* indeterminate bar while a refresh is in flight: the button label alone was
-   the only sign anything was happening. */
-.progress {
-  position: relative;
-  height: 2px;
-  margin: 0 -16px 6px;
-  overflow: hidden;
-  background: var(--divider);
-}
-.progress::after {
-  content: "";
-  position: absolute;
-  top: 0; bottom: 0; left: 0;
-  width: 38%;
-  background: var(--primary-hover);
-  animation: progress-slide 1.1s ease-in-out infinite;
-}
-@keyframes progress-slide {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
-}
-
-/* inline destructive confirm — replaces the native confirm() dialog so the
-   window keeps its own chrome. */
-.confirm {
+.icon-tile {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 -16px 6px;
-  padding: 6px 16px;
-  background: var(--err-tint);
-  border-top: 1px solid var(--divider);
-  border-bottom: 1px solid var(--divider);
-}
-.confirm-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  font: 12px/1.4 var(--sans);
+  justify-content: center;
+  width: var(--tile-size);
+  height: var(--tile-size);
+  border: 1px solid var(--tile-border);
+  border-radius: var(--radius);
+  background: var(--tile);
   color: var(--dim);
 }
-.confirm .btn-outline.danger { color: var(--err); border-color: rgba(251,113,133,0.35); }
-.confirm .btn-outline.danger:hover:not(:disabled) {
-  background: var(--err-tint);
-  border-color: var(--err);
+.glyph { width: 14px; height: 14px; display: block; }
+.tile-letter {
+  font: 600 11px/1 var(--sans);
+  color: var(--dim);
 }
-@media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; animation: none !important; }
-  /* with the slide disabled, a 38% sliver reads as stuck; show a full bar. */
-  .progress::after { width: 100%; opacity: .55; }
+.identity {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 500 13px/1.3 var(--sans);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.version {
+  flex: none;
+  max-width: 150px;
+  font: 11.5px/1.3 var(--mono);
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.version.stage { color: var(--chevron); }
+.version.version-error { color: var(--missing); max-width: 176px; }
+.version.version-none { color: var(--faint); font-style: italic; }
+.available-release {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 150px;
+  color: var(--dim);
+  font: 11.5px/1.3 var(--mono);
+  white-space: nowrap;
+}
+.download-glyph { width: 12px; height: 12px; flex: none; color: var(--chevron); }
+.available-version {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-menu-trigger {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  font: 600 15px/1 var(--sans);
+  cursor: pointer;
+  opacity: .55;
+  transition: opacity .1s linear, background-color .1s linear;
+}
+.mod-row:hover .row-menu-trigger,
+.mod-row:focus-within .row-menu-trigger { opacity: 1; }
+.row-menu-trigger:hover { background: rgba(255,255,255,0.07); color: var(--text); }
+.row-menu-trigger[aria-expanded="true"] {
+  opacity: 1;
+  background: rgba(255,255,255,0.07);
 }
 
-/* --- tracked-mod rows: one line, shared column tracks -------------------
-   Every row uses the same grid so name | installed | status start at the
-   same x across all rows (left-aligned, easy to scan). */
-.mod-row {
-  display: grid;
-  grid-template-columns: minmax(0, 150px) 92px minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 10px;
-  min-width: 0;
+.empty {
+  padding: 18px 2px;
+  max-width: 400px;
 }
-.cols-head { margin: 0 -16px; padding: 0 16px 2px; }
-.cols-head .mod-row > span {
+.empty-title {
+  font: 600 13px/1.4 var(--sans);
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.empty-body {
+  font: 12.5px/1.5 var(--sans);
+  color: var(--dim);
+}
+
+/* ------------------------------------------------------ repository tools */
+.repository-tools {
+  flex: 0 0 var(--tools-h);
+  height: var(--tools-h);
+  padding: 10px var(--inset);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--keyline);
+  background: var(--titlebar);
+}
+.add-row { display: flex; align-items: center; gap: var(--input-add-gap); }
+.state-summary {
   font: 11px/1.4 var(--sans);
   color: var(--faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-height: 15px;
 }
-.cell-name {
-  font: 500 13.5px/1.4 var(--sans);
+#addMsg {
+  font: 11px/1.35 var(--sans);
+  color: var(--missing);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 0;
+}
+#addMsg:empty { display: none; }
+#addMsg:not(:empty) + #stateSummary { display: none; }
+
+/* ------------------------------------------------------------- controls */
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 10px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius);
+  background: var(--field);
   color: var(--text);
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font: 12.5px/1.4 var(--sans);
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color .12s linear;
 }
-.cell-ver {
-  font: 12px/1.4 var(--mono);
+.input::placeholder { color: var(--faint); opacity: 1; }
+.input:focus { border-color: var(--focus); }
+.input.mono { font: 11.5px/1.4 var(--mono); }
+.input[readonly] { opacity: .8; }
+
+.btn {
+  flex: none;
+  height: var(--control-h);
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: 600 12px/1 var(--sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color .1s linear, border-color .1s linear, opacity .1s linear;
+}
+.btn:hover:not(:disabled) { background: rgba(255,255,255,0.05); border-color: var(--dim); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { cursor: default; opacity: .5; }
+
+.btn-primary {
+  min-width: 98px;
+  background: var(--primary);
+  border-color: var(--primary-border);
+  color: var(--text);
+}
+.btn-primary:hover:not(:disabled) {
+  background: rgba(0,200,242,0.36);
+  border-color: var(--focus);
+}
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
   color: var(--dim);
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.cell-ver.none { color: var(--faint); }
-.cell-status { min-width: 0; }
-.cell-status .chip { max-width: 100%; }
-/* status colors — contrast >= 4.5:1 on the #0B0A10 background */
-.chip-latest   { color: #3FB97F; background: rgba(63,185,127,0.13); }
-.chip-outdated { color: #E3A341; background: rgba(227,163,65,0.14); }
-.chip-missing  { color: #E5646E; background: rgba(229,100,110,0.13); }
-.chip-danger   { color: #F26D78; background: rgba(242,109,120,0.13); }
-.chip-none     { color: #8A83A0; background: rgba(138,131,160,0.10); }
+.btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.05); color: var(--text); }
+.btn-danger {
+  border-color: rgba(249,112,138,0.35);
+  background: transparent;
+  color: var(--missing);
+}
+.btn-danger:hover:not(:disabled) { background: rgba(249,112,138,0.12); border-color: var(--missing); }
+
+/* -------------------------------------------------------------- row menu */
+.row-menu {
+  position: fixed;
+  z-index: 80;
+  width: 208px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--field);
+  box-shadow: 0 16px 36px rgba(0,0,0,.62);
+}
+.menu-item {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: 500 12.5px/1 var(--sans);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible { background: rgba(255,255,255,0.07); }
+.menu-item:disabled { color: var(--faint); cursor: default; }
+.menu-item.danger { color: var(--missing); }
+.menu-item.danger:hover:not(:disabled) { background: rgba(249,112,138,0.10); }
+.menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--keyline);
+}
+
+/* ---------------------------------------------------------------- modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3,6,8,0.66);
+}
+.modal {
+  width: 352px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--titlebar);
+  box-shadow: 0 24px 60px rgba(0,0,0,.7);
+}
+.modal h3 {
+  font: 600 14px/1.3 var(--sans);
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.modal p {
+  font: 12.5px/1.55 var(--sans);
+  color: var(--dim);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ------------------------------------------------------------- tooltip */
+#tooltip {
+  position: fixed;
+  z-index: 200;
+  max-width: 300px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--tile);
+  color: var(--text);
+  font: 11px/1.4 var(--sans);
+  pointer-events: none;
+  box-shadow: 0 8px 20px rgba(0,0,0,.5);
+}
+
+/* ----------------------------------------------------------- a11y misc */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(167,167,181,0.22);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(167,167,181,0.38);
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
 </style>
 </head>
 <body>
-<main>
-  <div class="chrome">
+<div class="chrome">
   <header class="topbar">
     <span class="side-spacer" aria-hidden="true"></span>
     <h1 class="wordmark">modsync</h1>
     <span class="side-spacer" aria-hidden="true"></span>
   </header>
 
-  <div class="context-bar">
-    <button type="button" id="install-toggle" class="install-picker"
-            aria-expanded="false" aria-controls="install-menu">
-      <span class="install-glyph" aria-hidden="true"></span>
-      <span class="install-body">
-        <span class="install-label">Minecraft install</span>
-        <span class="install-value" id="install-value">Not set</span>
-      </span>
-      <span class="chevron" aria-hidden="true"></span>
-    </button>
-    <div class="install-menu" id="install-menu" hidden>
-      <ul id="install-list" class="install-list"></ul>
-      <p class="install-empty" id="install-empty" hidden></p>
-      <p class="install-custom-label">Or use a folder path</p>
-      <div class="inline-add">
-        <input id="folder" class="input mono" type="text" placeholder="e.g. ~/.minecraft"
-               aria-label="Minecraft folder path" spellcheck="false" autocomplete="off">
-        <button type="button" id="save" class="btn btn-outline">Save</button>
+  <section class="install-section">
+    <div class="install-picker" id="installToggle" role="button" tabindex="0"
+         aria-haspopup="listbox" aria-controls="installMenu" aria-expanded="false">
+      <div class="install-identity">
+        <span class="install-label">MINECRAFT INSTALL</span>
+        <span class="install-path" id="installValue">Not set</span>
       </div>
-      <div id="folder-msg" class="msg"></div>
-      <div class="install-foot">
-        <button type="button" class="btn btn-ghost js-rescan">Rescan</button>
-      </div>
+      <svg class="chevron" id="installChevron" viewBox="0 0 14 14" fill="none"
+           stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true">
+        <path d="M2.5 5l4.5 4.5L11.5 5"></path>
+      </svg>
     </div>
-  </div>
-  </div>
 
-  <section class="section">
-    <div class="section-head">
-      <div class="head-title">
-        <h2>Tracked mods</h2>
-        <span class="summary" id="summary" hidden></span>
+    <div class="install-menu" id="installMenu" hidden aria-label="Minecraft installs">
+      <div class="install-list" id="installList" role="listbox"
+           aria-label="Minecraft installs" tabindex="-1"></div>
+      <div class="install-footer">
+        <label class="footer-label" for="folder">Or use a folder path</label>
+        <div class="footer-row">
+          <input class="input mono" id="folder" type="text" placeholder="e.g. ~/.minecraft"
+                 aria-label="Minecraft folder path" aria-describedby="folderMsg"
+                 spellcheck="false" autocomplete="off">
+          <button class="btn" type="button" id="saveFolder">Save</button>
+        </div>
+        <div class="field-msg" id="folderMsg"></div>
+        <button class="btn-ghost" type="button" id="rescan">Rescan</button>
       </div>
-      <div class="head-actions">
-        <button type="button" id="restore" class="btn btn-ghost">Restore defaults</button>
-        <button type="button" id="refresh" class="btn btn-primary">Refresh all</button>
-      </div>
     </div>
-    <div class="progress" id="progress" hidden></div>
-    <div id="restore-confirm" class="confirm" hidden>
-      <span class="confirm-text">Replace tracked repos with the defaults file?</span>
-      <button type="button" id="restore-cancel" class="btn btn-ghost">Cancel</button>
-      <button type="button" id="restore-yes" class="btn btn-outline danger">Restore</button>
-    </div>
-    <ul id="list" class="list"></ul>
-    <div id="empty" class="empty">
-      <p class="empty-title">No tracked repos yet</p>
-      <p class="empty-body">Add your first with owner/name below.</p>
-    </div>
-    <div class="inline-add">
-      <input id="new-repo" class="input" type="text" placeholder="Add a repo: owner/name"
-             aria-label="Repository to track, as owner/name"
-             spellcheck="false" autocomplete="off">
-      <button type="button" id="add" class="btn btn-outline">Add</button>
-    </div>
-    <div id="add-msg" class="msg"></div>
-    <div id="list-msg" class="msg"></div>
-    <div id="restore-msg" class="msg"></div>
   </section>
 
-</main>
+  <section class="toolbar">
+    <div class="list-summary">
+      <h2 class="heading">Tracked mods</h2>
+      <span class="installed-count" id="summary" hidden></span>
+    </div>
+    <button class="btn btn-primary" type="button" id="refresh">Update all</button>
+  </section>
+
+  <main class="status-sections" id="list" tabindex="-1"
+        aria-label="Tracked mods by status"></main>
+
+  <section class="repository-tools">
+    <div class="add-row">
+      <input class="input" id="new-repo" type="text" placeholder="owner/name"
+             aria-label="Repository to track, as owner/name" aria-describedby="addMsg"
+             spellcheck="false" autocomplete="off">
+      <button class="btn" type="button" id="add">Add</button>
+    </div>
+    <div class="msg" id="addMsg"></div>
+    <div class="state-summary" id="stateSummary" title=""></div>
+  </section>
+</div>
+
+<div class="modal-backdrop" id="removeModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="modalTitle" aria-describedby="modalBody">
+    <h3 id="modalTitle">Remove from tracking?</h3>
+    <p id="modalBody"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" type="button" id="cancelRemove">Cancel</button>
+      <button class="btn btn-danger" type="button" id="confirmRemove">Remove</button>
+    </div>
+  </div>
+</div>
+
+<div class="row-menu" id="rowMenu" hidden role="menu" aria-label="Repository actions"></div>
+<div id="tooltip" role="tooltip" hidden></div>
+<div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
+<div class="sr-only" id="alertAnnouncer" aria-live="assertive" aria-atomic="true"></div>
+
 <script>
 "use strict";
-(async function () {
+(function () {
   const $ = (id) => document.getElementById(id);
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const WINDOW_W = 520;
+  const WINDOW_H = 640;
 
-  // Element refs and state are declared before the first await: the Zig side
-  // can eval renderState (and thus __applyState) while a fetch is in flight.
-  const folder = $("folder"), folderMsg = $("folder-msg");
-  const list = $("list"), empty = $("empty"), summaryEl = $("summary");
+  const installToggle = $("installToggle");
+  const installValue = $("installValue");
+  const installMenu = $("installMenu");
+  const installList = $("installList");
+  const folder = $("folder");
+  const saveFolderBtn = $("saveFolder");
+  const folderMsg = $("folderMsg");
+  const rescanBtn = $("rescan");
+  const summaryEl = $("summary");
   const refreshBtn = $("refresh");
-  const newRepo = $("new-repo"), addMsg = $("add-msg");
-  const restoreMsg = $("restore-msg");
-  const installToggle = $("install-toggle");
-  const installMenu = $("install-menu");
-  const installList = $("install-list");
-  const installEmpty = $("install-empty");
-  const installValue = $("install-value");
-  const progressEl = $("progress");
-  const restoreConfirm = $("restore-confirm");
-  const listMsg = $("list-msg");
+  const listEl = $("list");
+  const newRepo = $("new-repo");
+  const addBtn = $("add");
+  const addMsg = $("addMsg");
+  const stateSummary = $("stateSummary");
+  const removeModal = $("removeModal");
+  const modalBody = $("modalBody");
+  const cancelRemove = $("cancelRemove");
+  const confirmRemove = $("confirmRemove");
+  const rowMenu = $("rowMenu");
+  const announcer = $("announcer");
+  const alertAnnouncer = $("alertAnnouncer");
+  const tooltip = $("tooltip");
 
-  let refreshing = false;
+  // Derived from whichever state push or fetch lands last.
+  let appState = { minecraftDir: "", repos: [], updating: false };
+  let launchers = null;
   let currentGameDir = "";
-  let lastLaunchers = null;
+  let loading = true;
+  let loadFailed = false;
+  let localUpdating = false;
+  let addPending = false;
+  let removing = false;
+  let scanning = false;
+  let savePending = false;
+  let folderValid = false;
+  let folderCheckSeq = 0;
+  let folderTimer = 0;
+  let menuRepo = null;
+  let menuTrigger = null;
+  let modalRepo = null;
+  let modalTrigger = null;
+  let booted = false;
+  const pendingChecks = new Set();
 
-  // All eight bindings are globals injected by the webview glue; each returns
-  // a Promise, so every call site awaits.
-  async function call(name, ...args) {
+  const STATE_META = {
+    error: { label: "Errors", edge: "--missing" },
+    outdated: { label: "Update available", edge: "--outdated" },
+    missing: { label: "Not installed", edge: "--missing" },
+    unchecked: { label: "Not checked", edge: "--line" },
+    latest: { label: "Up to date", edge: "--latest" }
+  };
+  const STATE_ORDER = ["error", "outdated", "missing", "unchecked", "latest"];
+  const ACTIVE_STAGES = new Set(["checking", "downloading", "installing"]);
+
+  /* ------------------------------------------------------- bridge utils */
+
+  function call(name) {
     const fn = window[name];
-    if (typeof fn !== "function") throw new Error(name + " not available");
-    return await fn(...args);
-  }
-  // Zig's binds reply with the strings "true"/"false"; tolerate booleans too.
-  function asBool(res) { return res !== "false" && res !== false; }
-
-  // One message slot per card: plain success line, or a structured error block.
-  function showMsg(el, text, kind) {
-    el.className = "msg" + (kind ? " " + kind : "");
-    el.textContent = kind === "err" && text ? "Error: " + text : (text || "");
-  }
-
-  function setRefreshing(on) {
-    refreshing = on;
-    refreshBtn.disabled = on;
-    refreshBtn.textContent = on ? "Refreshing…" : "Refresh all";
-    progressEl.hidden = !on;
+    if (typeof fn !== "function") {
+      return Promise.reject(new Error(name + " not available"));
+    }
+    const args = Array.prototype.slice.call(arguments, 1);
+    try {
+      return Promise.resolve(fn.apply(null, args));
+    } catch (e) {
+      return Promise.reject(e);
+    }
   }
 
-  // Normalize a version tag for display: add a leading "v" to bare numbers.
+  function hasBridge(name) {
+    return typeof window[name] === "function";
+  }
+
+  function callSafe(name) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    return call.apply(null, [name].concat(args)).then(
+      (res) => res,
+      () => null
+    );
+  }
+
+  function parseJSONish(res) {
+    if (typeof res !== "string") return res;
+    const text = res.trim();
+    if (!text || (text.charAt(0) !== "{" && text.charAt(0) !== "[")) return res;
+    try { return JSON.parse(text); } catch (e) { return res; }
+  }
+
+  // Zig's binds reply with the strings "true"/"false"; newer result objects
+  // carry an `ok` field.
+  function asBool(res) {
+    const v = parseJSONish(res);
+    if (v === true || v === "true") return true;
+    if (v && typeof v === "object" && v.ok === true) return true;
+    return false;
+  }
+
+  function isFailure(res) {
+    const v = parseJSONish(res);
+    return v === false || v === "false" || (v && typeof v === "object" && v.ok === false);
+  }
+
   function prettyVersion(v) {
     const t = String(v || "");
     if (!t) return "—";
     return /^\d/.test(t) ? "v" + t : t;
   }
 
-  // One-line status derivation for a tracked repo:
-  //   error       → fetch/install failed (danger; short message shown)
-  //   no release  → GitHub reported no releases / no jar asset
-  //   missing     → checked, but nothing is installed
-  //   outdated    → installed, and the latest known tag differs
-  //   latest      → installed and up to date with the latest tag
-  //   not checked → no refresh has reported on this repo yet
-  function statusInfo(repo) {
-    const raw = String(repo.status || "").trim();
-    const s = raw.toLowerCase();
-    const installed = String(repo.installedVersion || "");
-    const latest = String(repo.latestVersion || "");
-    if (s.includes("error") || s.includes("fail")) {
-      return { cls: "chip-danger", text: raw || "error", detail: raw || "error" };
-    }
-    if (s.includes("no jar")) {
-      return { cls: "chip-none", text: "no jar asset", detail: raw };
-    }
-    if (s.includes("no release")) {
-      return { cls: "chip-none", text: "no release", detail: raw };
-    }
-    if (!installed) {
-      if (!raw) return { cls: "chip-none", text: "not checked", detail: "Not checked yet" };
-      return { cls: "chip-missing", text: "missing", detail: "Not installed" };
-    }
-    if (s === "up to date" || s.startsWith("installed ")) {
-      return {
-        cls: "chip-latest",
-        text: "latest",
-        detail: "Installed " + prettyVersion(installed) + " (up to date)",
-      };
-    }
-    if (latest) {
-      return latest === installed
-        ? {
-            cls: "chip-latest",
-            text: "latest",
-            detail: "Installed " + prettyVersion(installed) + " (up to date)",
-          }
-        : {
-            cls: "chip-outdated",
-            text: "outdated",
-            detail:
-              "Installed " + prettyVersion(installed) +
-              " · latest " + prettyVersion(latest),
-          };
-    }
-    if (!raw) return { cls: "chip-none", text: "not checked", detail: "Not checked yet" };
-    return { cls: "chip-none", text: raw, detail: raw };
+  function prettyPath(dir) {
+    return String(dir || "").replace(/^\/(?:Users|home)\/[^/]+/, "~");
   }
 
-  function statusChip(repo) {
-    const info = statusInfo(repo);
-    const chip = document.createElement("span");
-    chip.className = "chip " + info.cls;
-    chip.title = info.detail;
-    const dot = document.createElement("span");
-    dot.className = "dot";
-    const label = document.createElement("span");
-    label.className = "chip-text";
-    label.textContent = info.text;
-    chip.append(dot, label);
-    return chip;
+  function fullName(repo) {
+    return String(repo && repo.owner || "") + "/" + String(repo && repo.name || "");
   }
 
-  function rowFor(repo, owner) {
-    const name = String(repo.name || "");
-    const full = owner + "/" + name;
+  function announce(text, assertive) {
+    const el = assertive ? alertAnnouncer : announcer;
+    el.textContent = "";
+    window.setTimeout(function () {
+      el.textContent = String(text || "");
+    }, 20);
+  }
 
-    const li = document.createElement("li");
-    li.className = "item";
+  function isInstalled(repo) {
+    return !!repo.installed || !!String(repo.installedVersion || "");
+  }
 
-    // One line, shared grid columns: name | installed version | status | Remove.
-    const row = document.createElement("div");
-    row.className = "mod-row";
+  function isUpdating() {
+    if (appState.updating || localUpdating) return true;
+    return appState.repos.some(function (repo) {
+      return ACTIVE_STAGES.has(String(repo.stage || "").toLowerCase());
+    });
+  }
 
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "cell-name";
-    nameSpan.textContent = name;
-    nameSpan.title = full;
+  /* ------------------------------------------------------------ state io */
 
-    const ver = document.createElement("span");
-    ver.className = "cell-ver" + (repo.installedVersion ? "" : " none");
-    ver.textContent = prettyVersion(repo.installedVersion);
-    ver.title = repo.installedVersion
-      ? "Installed " + prettyVersion(repo.installedVersion)
-      : "Not installed";
+  function normalizeRepoShape(r) {
+    if (!r || typeof r !== "object") return null;
+    return {
+      owner: String(r.owner == null ? "" : r.owner),
+      name: String(r.name == null ? "" : r.name),
+      installed: r.installed === true,
+      latest: typeof r.latest === "boolean" ? r.latest : undefined,
+      status: typeof r.status === "string" ? r.status : "",
+      installedVersion: r.installedVersion == null ? "" : String(r.installedVersion),
+      latestVersion: r.latestVersion == null ? "" : String(r.latestVersion),
+      availableVersion: r.availableVersion == null ? "" : String(r.availableVersion),
+      stage: typeof r.stage === "string" ? r.stage : "idle",
+      error: r.error == null ? "" : String(r.error)
+    };
+  }
 
-    const statusCell = document.createElement("span");
-    statusCell.className = "cell-status";
-    statusCell.appendChild(statusChip(repo));
+  function repoState(repo) {
+    const stage = String(repo.stage || "").toLowerCase();
+    const raw = String(repo.status || "").trim().toLowerCase();
+    if (stage === "error" || repo.error) return "error";
+    if (raw.indexOf("error") !== -1 || raw.indexOf("fail") !== -1) return "error";
+    if (/no (?:compatible )?(?:jar|release)/.test(raw)) return "error";
 
-    const rm = document.createElement("button");
-    rm.type = "button";
-    rm.className = "btn btn-danger";
-    rm.textContent = "Remove";
-    rm.title = "Remove " + full;
-    rm.addEventListener("click", async () => {
-      rm.disabled = true;
-      // The row is destroyed by the re-render, so remember its position and
-      // move focus to the neighbour (or the add field) instead of letting
-      // focus fall back to the document.
-      const idx = Array.prototype.indexOf.call(list.querySelectorAll(".item"), li);
-      try { await call("removeRepo", full); } catch (e) {}
-      await load();  // re-fetch + re-render
-      const buttons = list.querySelectorAll(".item .btn-danger");
-      const next = buttons[Math.min(idx, buttons.length - 1)];
-      (next || newRepo).focus();
+    const installedVersion = String(repo.installedVersion || "");
+    const latestVersion = String(repo.latestVersion || "");
+    const available = String(repo.availableVersion || "");
+    const checked = !!raw || !!latestVersion || !!available ||
+      repo.latest === true || repo.latest === false;
+
+    if (!isInstalled(repo)) return checked ? "missing" : "unchecked";
+
+    if (repo.latest === true) return "latest";
+    if (repo.latest === false) return "outdated";
+    if (raw === "up to date" || raw === "latest" || raw.indexOf("installed ") === 0) {
+      return "latest";
+    }
+    if (raw.indexOf("outdated") !== -1 || raw.indexOf("update available") !== -1 ||
+        raw.indexOf("behind") !== -1) {
+      return "outdated";
+    }
+    if (latestVersion && latestVersion !== installedVersion) return "outdated";
+    if (latestVersion && latestVersion === installedVersion) return "latest";
+    if (!raw) return "unchecked";
+    return "latest";
+  }
+
+  window.__applyState = function (state) {
+    if (!state || typeof state !== "object") state = {};
+    const repos = Array.isArray(state.repos)
+      ? state.repos.map(normalizeRepoShape).filter(Boolean)
+      : [];
+    appState = {
+      minecraftDir: typeof state.minecraftDir === "string" ? state.minecraftDir : "",
+      repos: repos,
+      updating: state.updating === true
+    };
+    currentGameDir = appState.minecraftDir;
+
+    if (Object.prototype.hasOwnProperty.call(state, "updating")) {
+      localUpdating = state.updating === true;
+    } else if (localUpdating && !repos.some(function (repo) {
+      return ACTIVE_STAGES.has(String(repo.stage || "").toLowerCase());
+    })) {
+      // Legacy backend: a push only arrives when the batch has settled.
+      localUpdating = false;
+    }
+
+    // A freshly added repo keeps its "Checking…" cell until the backend has
+    // reported something about it.
+    pendingChecks.forEach(function (key) {
+      const repo = repos.find(function (r) {
+        return (r.owner + "/" + r.name).toLowerCase() === key;
+      });
+      if (repo && (repo.status || repo.error || repo.latestVersion ||
+          repo.availableVersion || repo.installedVersion ||
+          String(repo.stage || "idle") !== "idle")) {
+        pendingChecks.delete(key);
+      }
     });
 
-    row.append(nameSpan, ver, statusCell, rm);
-    li.append(row);
-    return li;
+    if (document.activeElement !== folder) {
+      folder.value = currentGameDir;
+      folderValid = !!currentGameDir;
+    }
+    renderAll();
+  };
+
+  async function load() {
+    const res = parseJSONish(await callSafe("getConfig"));
+    const ok = !!res && typeof res === "object" && !Array.isArray(res);
+    loading = false;
+    loadFailed = !ok;
+    if (ok) {
+      window.__applyState(res);
+    } else {
+      window.__applyState({ minecraftDir: currentGameDir, repos: [] });
+      announce("Couldn't load tracked repos.", true);
+    }
+  }
+
+  async function loadLaunchers() {
+    const res = parseJSONish(await callSafe("listLaunchers"));
+    const ok = !!res && typeof res === "object" && Array.isArray(res.profiles);
+    if (!ok) {
+      launchers = null;
+      installList.textContent = "";
+      const empty = document.createElement("div");
+      empty.className = "install-empty";
+      empty.textContent = "Couldn't read launcher profiles.";
+      installList.appendChild(empty);
+      return;
+    }
+    renderLaunchers(res);
+  }
+
+  /* -------------------------------------------------------------- render */
+
+  function renderAll() {
+    if (!rowMenu.hidden) closeRowMenu(true);
+
+    const active = document.activeElement;
+    let focusRef = null;
+    if (active && active.classList && active.classList.contains("row-menu-trigger")) {
+      const row = active.closest(".mod-row");
+      if (row) {
+        focusRef = {
+          owner: row.getAttribute("data-owner"),
+          name: row.getAttribute("data-name")
+        };
+      }
+    }
+
+    renderList(appState.repos);
+    renderSummary();
+    updateStateSummary();
+    renderChrome();
+    if (launchers) renderLaunchers(launchers);
+    updateInstallValue();
+
+    if (focusRef) {
+      const rows = listEl.querySelectorAll(".mod-row");
+      let targetRow = null;
+      for (const row of rows) {
+        if (row.getAttribute("data-owner") === focusRef.owner &&
+            row.getAttribute("data-name") === focusRef.name) {
+          targetRow = row;
+          break;
+        }
+      }
+      const trigger = targetRow ? targetRow.querySelector(".row-menu-trigger") : null;
+      if (trigger) trigger.focus();
+      else listEl.focus();
+    }
+  }
+
+  function renderSummary() {
+    const total = appState.repos.length;
+    const installed = appState.repos.filter(isInstalled).length;
+    summaryEl.textContent = installed + " of " + total + " installed";
+    summaryEl.hidden = total === 0;
+  }
+
+  function updateStateSummary() {
+    let text;
+    if (loading) {
+      text = "Loading tracked mods…";
+    } else if (loadFailed) {
+      text = "Couldn't load tracked repos.";
+    } else if (appState.repos.length === 0) {
+      text = "No repositories tracked yet.";
+    } else {
+      const total = appState.repos.length;
+      const updates = appState.repos.filter(function (r) {
+        return repoState(r) === "outdated";
+      }).length;
+      const errors = appState.repos.filter(function (r) {
+        return repoState(r) === "error";
+      }).length;
+      const parts = [total + (total === 1 ? " repository tracked" : " repositories tracked")];
+      if (updates) parts.push(updates + (updates === 1 ? " update" : " updates"));
+      if (errors) parts.push(errors + (errors === 1 ? " error" : " errors"));
+      text = parts.join(" · ");
+    }
+    stateSummary.textContent = text;
+    stateSummary.title = text;
+  }
+
+  function renderChrome() {
+    const updating = isUpdating();
+    const total = appState.repos.length;
+
+    refreshBtn.disabled = updating || total === 0;
+    refreshBtn.textContent = updating ? "Updating…" : "Update all";
+    if (updating) {
+      refreshBtn.setAttribute("aria-description", "Update in progress");
+    } else if (total === 0) {
+      refreshBtn.setAttribute("aria-description", "No tracked mods");
+    } else {
+      refreshBtn.removeAttribute("aria-description");
+    }
+
+    installToggle.setAttribute("aria-disabled", updating ? "true" : "false");
+    installToggle.title = updating
+      ? "Install can't be changed while updates are running."
+      : (currentGameDir || "Choose the Minecraft install modsync manages");
+    installToggle.setAttribute("data-tip", installToggle.title);
+
+    rescanBtn.disabled = updating || scanning;
+    rescanBtn.textContent = scanning ? "Scanning…" : "Rescan";
+
+    updateSaveEnabled();
+
+    if (updating && !installMenu.hidden) closeInstall(false);
+  }
+
+  function updateSaveEnabled() {
+    const blocked = isUpdating() || savePending;
+    saveFolderBtn.disabled = blocked || !folderValid;
+    if (isUpdating()) {
+      saveFolderBtn.setAttribute("aria-description", "Install can't be changed while updates are running.");
+    } else if (savePending) {
+      saveFolderBtn.setAttribute("aria-description", "Saving");
+    } else if (!folderValid) {
+      saveFolderBtn.setAttribute("aria-description",
+        folder.value.trim() ? "Folder path isn't valid yet" : "Enter a folder path");
+    } else {
+      saveFolderBtn.removeAttribute("aria-description");
+    }
   }
 
   function renderList(repos) {
-    list.textContent = "";
-    let installed = 0;
-    // Group rows under their author, preserving first-seen order. The full
-    // owner/name is still what removeRepo expects, so rows keep a back-ref.
-    const groups = new Map();
-    for (const repo of repos) {
-      const owner = String(repo.owner || "");
-      if (!groups.has(owner)) groups.set(owner, []);
-      groups.get(owner).push(repo);
+    listEl.textContent = "";
+    if (repos.length === 0) {
+      listEl.setAttribute("aria-busy", loading ? "true" : "false");
+      listEl.appendChild(buildEmpty());
+      return;
     }
-    // Column header aligned to the same grid as every row (sentence case).
-    if (repos.length > 0) {
-      const colsHead = document.createElement("li");
-      colsHead.className = "cols-head";
-      const headGrid = document.createElement("div");
-      headGrid.className = "mod-row";
-      for (const label of ["Mod", "Installed", "Status", ""]) {
-        const span = document.createElement("span");
-        span.textContent = label;
-        headGrid.appendChild(span);
-      }
-      colsHead.appendChild(headGrid);
-      list.appendChild(colsHead);
-    }
-    let groupIndex = 0;
-    for (const [owner, items] of groups) {
-      const head = document.createElement("li");
-      head.className = groupIndex++ > 0 ? "group-head sep" : "group-head";
-      const ownerLabel = document.createElement("b");
-      ownerLabel.textContent = owner;
+    listEl.removeAttribute("aria-busy");
+
+    const groups = { error: [], outdated: [], missing: [], unchecked: [], latest: [] };
+    for (const repo of repos) groups[repoState(repo)].push(repo);
+
+    for (const key of STATE_ORDER) {
+      if (!groups[key].length) continue;
+      const meta = STATE_META[key];
+
+      const section = document.createElement("section");
+      section.className = "status-section";
+      section.setAttribute("data-state", key);
+
+      const caption = document.createElement("div");
+      caption.className = "section-caption";
+      const heading = document.createElement("h2");
+      heading.className = "state-heading";
+      heading.textContent = meta.label;
       const count = document.createElement("span");
-      count.textContent = " · " + items.length;
-      head.append(ownerLabel, count);
-      head.title = owner;
-      list.appendChild(head);
-      for (const repo of items) {
-        if (repo.installedVersion) installed++;
-        list.appendChild(rowFor(repo, owner));
-      }
-    }
-    empty.hidden = repos.length > 0;
-    if (repos.length > 0) {
-      summaryEl.hidden = false;
-      summaryEl.textContent = installed + " of " + repos.length + " installed";
-    } else {
-      summaryEl.hidden = true;
-      summaryEl.textContent = "";
+      count.className = "section-count";
+      count.textContent = String(groups[key].length);
+      count.setAttribute("aria-label", groups[key].length + " mods");
+      caption.append(heading, count);
+
+      const rows = document.createElement("div");
+      rows.className = "section-rows";
+      for (const repo of groups[key]) rows.appendChild(buildRow(repo, key));
+
+      section.append(caption, rows);
+      listEl.appendChild(section);
     }
   }
 
-  // Detected installs are the options inside the top selector, so there is no
-  // separate launcher list any more: this drives the dropdown directly.
-  // The instance name is what distinguishes two installs: the full path is
-  // long, identical for its first sixty characters, and is truncated first.
-  function profilePath(p) {
-    const dir = String(p.gameDir || "");
-    const m = dir.match(/\/(?:instances|profiles)\/(.+)$/);
-    return m ? m[1] : prettyPath(dir);
+  function buildEmpty() {
+    const wrap = document.createElement("div");
+    wrap.className = "empty";
+    if (loading) {
+      const title = document.createElement("p");
+      title.className = "empty-title";
+      title.textContent = "Loading tracked mods…";
+      wrap.appendChild(title);
+      return wrap;
+    }
+    if (loadFailed) {
+      const title = document.createElement("p");
+      title.className = "empty-title";
+      title.textContent = "Couldn't load tracked mods.";
+      const body = document.createElement("p");
+      body.className = "empty-body";
+      body.textContent = "Check the app log, then reopen the window.";
+      wrap.append(title, body);
+      return wrap;
+    }
+    const title = document.createElement("p");
+    title.className = "empty-title";
+    title.textContent = "No tracked mods yet";
+    const body = document.createElement("p");
+    body.className = "empty-body";
+    body.textContent = "Add a repository below, for example cumsauce/newmod.";
+    wrap.append(title, body);
+    return wrap;
   }
+
+  function buildRow(repo, stateKey) {
+    const full = fullName(repo);
+    const row = document.createElement("div");
+    row.className = "mod-row";
+    row.setAttribute("data-owner", repo.owner);
+    row.setAttribute("data-name", repo.name);
+    row.setAttribute("data-state", stateKey);
+
+    const edge = document.createElement("span");
+    edge.className = "status-edge";
+    edge.style.background = "var(" + STATE_META[stateKey].edge + ")";
+    edge.setAttribute("aria-hidden", "true");
+
+    const tile = document.createElement("div");
+    tile.className = "icon-tile";
+    tile.setAttribute("aria-hidden", "true");
+    tile.appendChild(repoGlyph(repo));
+
+    const identity = document.createElement("span");
+    identity.className = "identity";
+    identity.textContent = full;
+    identity.title = full;
+    identity.setAttribute("aria-label", full);
+
+    const version = buildVersionCell(repo, full);
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "row-menu-trigger";
+    trigger.textContent = "⋯";
+    trigger.setAttribute("aria-label", "Actions for " + full);
+    trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("data-tip", "Actions for " + full);
+    trigger.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!rowMenu.hidden && menuTrigger === trigger) {
+        closeRowMenu(true);
+        return;
+      }
+      openRowMenu(repo, trigger);
+    });
+
+    row.append(edge, tile, identity, version, trigger);
+    return row;
+  }
+
+  function buildVersionCell(repo, full) {
+    const stage = String(repo.stage || "").toLowerCase();
+    const stageLabel = stage === "checking" ? "Checking…"
+      : stage === "downloading" ? "Downloading…"
+      : stage === "installing" ? "Installing…"
+      : "";
+
+    if (stageLabel) {
+      const el = document.createElement("span");
+      el.className = "version stage";
+      el.textContent = stageLabel;
+      el.setAttribute("aria-label", full + ": " + stageLabel);
+      return el;
+    }
+
+    if (stage === "error" || repo.error) {
+      const el = document.createElement("span");
+      el.className = "version version-error";
+      const message = String(repo.error || repo.status || "Update failed");
+      el.textContent = message;
+      el.title = message;
+      el.setAttribute("aria-label", full + ": " + message);
+      return el;
+    }
+
+    if (pendingChecks.has(full.toLowerCase())) {
+      const el = document.createElement("span");
+      el.className = "version stage";
+      el.textContent = "Checking…";
+      return el;
+    }
+
+    if (!isInstalled(repo)) {
+      const available = String(repo.availableVersion || repo.latestVersion || "");
+      if (available) {
+        const wrap = document.createElement("span");
+        wrap.className = "available-release";
+        wrap.appendChild(downloadGlyph());
+        const label = document.createElement("span");
+        label.className = "available-version";
+        label.textContent = prettyVersion(available);
+        wrap.appendChild(label);
+        const title = "Available release " + prettyVersion(available) + " (not installed)";
+        wrap.title = title;
+        wrap.setAttribute("aria-label", full + ": " + title);
+        return wrap;
+      }
+      const none = document.createElement("span");
+      none.className = "version version-none";
+      none.textContent = "Not installed";
+      none.setAttribute("aria-label", full + ": not installed");
+      return none;
+    }
+
+    const installedVersion = String(repo.installedVersion || "");
+    const latestVersion = String(repo.latestVersion || "");
+    const el = document.createElement("span");
+    el.className = "version";
+    el.textContent = prettyVersion(installedVersion);
+    const title = "Installed " + prettyVersion(installedVersion) +
+      (latestVersion && latestVersion !== installedVersion
+        ? " · latest " + prettyVersion(latestVersion)
+        : "");
+    el.title = title;
+    el.setAttribute("aria-label", full + ": " + title);
+    return el;
+  }
+
+  function repoGlyph(repo) {
+    const name = String(repo.name || "").toLowerCase();
+    const paths = {
+      foley: ["M3 10v4", "M7 7v10", "M11 9v6", "M15 5v14", "M19 8v8"],
+      doorswing: ["M6 21V3h9v18", "M15 12h3"],
+      earshot: [
+        "M7 8a5 5 0 0 1 10 0c0 2.6-2.6 3.6-3.2 6.1a2.8 2.8 0 0 1-5.4-.6",
+        "M9.4 19.6A3.4 3.4 0 0 0 12.8 22"
+      ],
+      stalker: ["M12 3c3 4 6 7 6 10a6 6 0 1 1-12 0c0-3 3-6 6-10z"]
+    };
+    if (paths[name]) {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.setAttribute("class", "glyph");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "1.6");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("aria-hidden", "true");
+      for (const d of paths[name]) {
+        const path = document.createElementNS(SVG_NS, "path");
+        path.setAttribute("d", d);
+        svg.appendChild(path);
+      }
+      return svg;
+    }
+    const letter = document.createElement("span");
+    letter.className = "tile-letter";
+    letter.textContent = (name.charAt(0) || "?").toUpperCase();
+    return letter;
+  }
+
+  function downloadGlyph() {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "download-glyph");
+    svg.setAttribute("viewBox", "0 0 14 14");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.5");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const shaft = document.createElementNS(SVG_NS, "path");
+    shaft.setAttribute("d", "M7 2v7");
+    const head = document.createElementNS(SVG_NS, "path");
+    head.setAttribute("d", "M4 6.5L7 9.5l3-3");
+    const base = document.createElementNS(SVG_NS, "path");
+    base.setAttribute("d", "M2.5 12h9");
+    svg.append(shaft, head, base);
+    return svg;
+  }
+
+  /* -------------------------------------------------------- install menu */
 
   function renderLaunchers(payload) {
+    launchers = payload;
+    const hadFocus = !installMenu.hidden && installMenu.contains(document.activeElement);
     installList.textContent = "";
-    lastLaunchers = payload;
-    const profiles = (payload && Array.isArray(payload.profiles)) ? payload.profiles : [];
-    const errors = (payload && Array.isArray(payload.errors)) ? payload.errors : [];
+    const profiles = payload && Array.isArray(payload.profiles) ? payload.profiles : [];
+    const errors = payload && Array.isArray(payload.errors) ? payload.errors : [];
 
-    installEmpty.hidden = profiles.length > 0;
     if (profiles.length === 0) {
-      installEmpty.textContent = errors.length
+      const empty = document.createElement("div");
+      empty.className = "install-empty";
+      empty.textContent = errors.length
         ? "Couldn't read: " + errors.join(", ")
         : "No Prism or Modrinth profiles found.";
+      installList.appendChild(empty);
     }
 
-    for (const p of profiles) {
-      const selected = p.gameDir === currentGameDir;
-      const li = document.createElement("li");
-
+    profiles.forEach(function (profile, index) {
+      const selected = profile.gameDir === currentGameDir;
       const btn = document.createElement("button");
       btn.type = "button";
+      btn.id = "install-option-" + index;
       btn.className = "install-option" + (selected ? " selected" : "");
-      btn.title = String(p.gameDir || "");
+      btn.setAttribute("role", "option");
+      btn.setAttribute("aria-selected", selected ? "true" : "false");
+      btn.tabIndex = selected ? 0 : -1;
+      btn.title = String(profile.gameDir || "");
       if (selected) btn.setAttribute("aria-current", "true");
 
       const text = document.createElement("span");
       text.className = "opt-text";
       const name = document.createElement("span");
       name.className = "opt-name";
-      name.textContent = String(p.name || "Untitled");
-      const path = document.createElement("span");
-      path.className = "opt-path";
-      path.textContent = (p.kind === "prism" ? "Prism · " : "Modrinth · ") + profilePath(p);
-      text.append(name, path);
+      name.textContent = String(profile.name || "Untitled");
+      const meta = document.createElement("span");
+      meta.className = "opt-meta";
+      const source = profile.kind === "prism" ? "Prism"
+        : profile.kind === "modrinth" ? "Modrinth"
+        : "Custom";
+      meta.textContent = source + " · " + profilePath(profile);
+      text.append(name, meta);
       btn.appendChild(text);
 
       if (selected) {
         const check = document.createElement("span");
         check.className = "opt-check";
-        check.setAttribute("aria-hidden", "true");
         check.textContent = "✓";
+        check.setAttribute("aria-hidden", "true");
         btn.appendChild(check);
       }
 
-      btn.addEventListener("click", async () => {
-        let ok = false;
-        try { ok = asBool(await call("selectProfile", p.gameDir)); } catch (e) {}
-        if (!ok) return;
-        setMenuOpen(false);
-        installToggle.focus();  // this option is removed by the re-render
-        await load();           // re-read the path for the selector label
-        await loadLaunchers();  // re-mark the selected option
+      btn.addEventListener("click", function () {
+        selectProfile(profile);
       });
+      installList.appendChild(btn);
+    });
 
-      li.appendChild(btn);
-      installList.appendChild(li);
+    // If none of the detected profiles matches the saved dir, the first one
+    // still needs to be reachable by Tab.
+    if (profiles.length && !installList.querySelector(".install-option[tabindex='0']")) {
+      const first = installList.querySelector(".install-option");
+      if (first) first.tabIndex = 0;
+    }
+
+    if (hadFocus) {
+      const selected = installList.querySelector(".install-option[aria-selected='true']");
+      const target = selected || installList.querySelector(".install-option");
+      if (target) target.focus();
+      else folder.focus();
     }
 
     updateInstallValue();
   }
 
-  // Collapse the user's home prefix so paths read as "~/Library/..." rather
-  // than a raw absolute path.
-  function prettyPath(dir) {
-    return String(dir || "").replace(/^\/(?:Users|home)\/[^/]+/, "~");
+  function profilePath(profile) {
+    const dir = String(profile.gameDir || "");
+    const match = dir.match(/\/(?:instances|profiles)\/(.+)$/);
+    return match ? match[1] : prettyPath(dir);
   }
 
   function updateInstallValue() {
-    const dir = currentGameDir;
+    const dir = appState.minecraftDir;
     if (!dir) {
       installValue.textContent = "Not set";
-      installToggle.title = "Choose the Minecraft install modsync manages";
+    } else {
+      const profiles = launchers && Array.isArray(launchers.profiles) ? launchers.profiles : [];
+      const hit = profiles.find(function (profile) {
+        return profile.gameDir === dir;
+      });
+      installValue.textContent = hit ? String(hit.name || prettyPath(dir)) : prettyPath(dir);
+    }
+    installValue.title = dir || "No install selected";
+  }
+
+  function openInstall() {
+    if (isUpdating()) {
+      announce("Install can't be changed while updates are running.", true);
       return;
     }
-    const profiles = (lastLaunchers && Array.isArray(lastLaunchers.profiles)) ? lastLaunchers.profiles : [];
-    const hit = profiles.find((p) => p.gameDir === dir);
-    installValue.textContent = hit ? String(hit.name || dir) : prettyPath(dir);
-    installToggle.title = dir;
+    renderLaunchers(launchers || { profiles: [], errors: [] });
+    installMenu.hidden = false;
+    installToggle.setAttribute("aria-expanded", "true");
+    folder.value = currentGameDir;
+    folderValid = !!currentGameDir;
+    updateSaveEnabled();
+    const selected = installList.querySelector(".install-option[aria-selected='true']");
+    const target = selected || installList.querySelector(".install-option");
+    if (target) target.focus();
+    else folder.focus();
   }
 
-  function setMenuOpen(open) {
-    installMenu.hidden = !open;
-    installToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  function closeInstall(restoreFocus) {
+    if (installMenu.hidden) return;
+    installMenu.hidden = true;
+    installToggle.setAttribute("aria-expanded", "false");
+    // Unapplied path edits are discarded, matching Escape/outside-click.
+    folder.value = currentGameDir;
+    folderValid = !!currentGameDir;
+    showFolderMsg("", "");
+    updateSaveEnabled();
+    if (restoreFocus) installToggle.focus();
   }
 
-  // Single entry point for state: getConfig on load, renderState pushes during
-  // a refresh, and re-fetches after add/remove. Also re-enables the refresh
-  // button whenever a pushed state lands.
-  window.__applyState = function (state) {
-    setRefreshing(false);
-    if (!state || typeof state !== "object") { renderList([]); return; }
-    // Don't stomp the folder input while the user is typing in it.
-    if (document.activeElement !== folder) folder.value = state.minecraftDir || "";
-    currentGameDir = state.minecraftDir || "";
-    renderList(Array.isArray(state.repos) ? state.repos : []);
-    if (lastLaunchers) renderLaunchers(lastLaunchers);  // re-mark the selected option
-    updateInstallValue();
-    setRefreshing(false);
-  };
-
-  async function load() {
-    let res;
-    try { res = await call("getConfig"); } catch (e) { res = null; }
-    // The Zig side returns the state as a JSON string; the glue may pass it
-    // through as-is. Handle both shapes.
-    if (typeof res === "string") { try { res = JSON.parse(res); } catch (e) { res = null; } }
-    // A failed read must not masquerade as an empty account: __applyState(null)
-    // renders the "No tracked repos yet" state, which is a lie here.
-    const failed = !res || typeof res !== "object";
-    showMsg(listMsg, failed ? "Couldn't load tracked repos." : "", failed ? "err" : "");
-    window.__applyState(res);  // null → empty state
+  function showFolderMsg(text, kind) {
+    folderMsg.textContent = text || "";
+    folderMsg.className = "field-msg" + (kind ? " " + kind : "");
   }
 
-  async function loadLaunchers() {
-    let payload = null;
-    try { payload = await call("listLaunchers"); } catch (e) {}
-    if (typeof payload === "string") {
-      try { payload = JSON.parse(payload); } catch (e) { payload = null; }
-    }
-    if (!payload || typeof payload !== "object") {
-      // Stale options must not stay clickable: selecting one would point the
-      // app at a path detection could not confirm.
-      installList.textContent = "";
-      lastLaunchers = null;
-      installEmpty.hidden = false;
-      installEmpty.textContent = "Couldn't read launcher profiles.";
+  async function selectProfile(profile) {
+    if (isUpdating()) {
+      announce("Install can't be changed while updates are running.", true);
       return;
     }
-    renderLaunchers(payload);
-  }
-
-  document.querySelectorAll(".js-rescan").forEach((btn) => {
-    btn.addEventListener("click", () => loadLaunchers());
-  });
-
-  installToggle.addEventListener("click", () => setMenuOpen(installMenu.hidden));
-  // Arrow keys walk the options; otherwise the menu is Tab-only.
-  installMenu.addEventListener("keydown", (e) => {
-    const key = e.key;
-    if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return;
-    const opts = Array.from(installList.querySelectorAll(".install-option"));
-    if (!opts.length) return;
-    const i = opts.indexOf(document.activeElement);
-    let next = 0;
-    if (key === "End") next = opts.length - 1;
-    else if (key === "ArrowUp") next = i < 0 ? opts.length - 1 : Math.max(i - 1, 0);
-    else if (key === "ArrowDown") next = i < 0 ? 0 : Math.min(i + 1, opts.length - 1);
-    e.preventDefault();
-    opts[next].focus();
-  });
-  // Click-away closes the menu; the toggle's own click is excluded so the
-  // bubbled event doesn't immediately re-close what it just opened.
-  document.addEventListener("click", (e) => {
-    if (!installMenu.hidden &&
-        !installMenu.contains(e.target) &&
-        !installToggle.contains(e.target)) {
-      setMenuOpen(false);
-    }
-  });
-
-  $("restore").addEventListener("click", () => {
-    restoreConfirm.hidden = false;
-    $("restore-yes").focus();
-  });
-  $("restore-cancel").addEventListener("click", () => {
-    restoreConfirm.hidden = true;
-    $("restore").focus();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if (!restoreConfirm.hidden) {
-      restoreConfirm.hidden = true;
-      $("restore").focus();
-      return;
-    }
-    // Escape inside the path field must not throw away a half-typed path.
-    if (!installMenu.hidden && e.target !== folder) {
-      setMenuOpen(false);
-      installToggle.focus();
-    }
-  });
-  $("restore-yes").addEventListener("click", async () => {
-    restoreConfirm.hidden = true;
     let ok = false;
-    try { ok = asBool(await call("restoreDefaults")); } catch (e) {}
-    showMsg(restoreMsg, ok ? "" : "Couldn't restore defaults.", ok ? "" : "err");
-    await load();  // re-fetch + re-render
-  });
+    try {
+      ok = asBool(await call("selectProfile", profile.gameDir));
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) {
+      announce("Couldn't switch install.", true);
+      return;
+    }
+    closeInstall(true);
+    await Promise.all([load(), loadLaunchers()]);
+  }
 
-  // Flush a state push that arrived before this script ran.
-  if (window.__pendingState) {
-    window.__applyState(window.__pendingState);
-    window.__pendingState = null;
+  function setRoving(options, index) {
+    options.forEach(function (option, i) {
+      option.tabIndex = i === index ? 0 : -1;
+    });
+    installList.setAttribute("aria-activedescendant", options[index].id);
+  }
+
+  /* --------------------------------------------------------- row actions */
+
+  function openRowMenu(repo, trigger) {
+    closeRowMenu(false);
+    menuRepo = repo;
+    menuTrigger = trigger;
+    rowMenu.textContent = "";
+
+    const stateKey = repoState(repo);
+    const updating = isUpdating();
+    const items = [];
+
+    if (currentGameDir && (stateKey === "error" || stateKey === "outdated" || stateKey === "missing")) {
+      items.push({
+        label: stateKey === "error" ? "Retry" : stateKey === "missing" ? "Install mod" : "Update mod",
+        primary: stateKey === "error",
+        disabled: updating,
+        reason: "Update in progress",
+        run: function () { runRepoUpdate(repo); }
+      });
+    }
+    items.push({
+      label: "View on GitHub",
+      run: function () { openGithub(repo); }
+    });
+    items.push({
+      label: "Copy repo name",
+      run: function () { copyRepoName(repo); }
+    });
+    items.push({ separator: true });
+    items.push({
+      label: "Remove from tracking…",
+      danger: true,
+      disabled: updating,
+      reason: "Update in progress",
+      run: function (triggerEl) { openRemoveModal(repo, triggerEl); }
+    });
+
+    let defaultItem = null;
+    for (const item of items) {
+      if (item.separator) {
+        const sep = document.createElement("div");
+        sep.className = "menu-sep";
+        sep.setAttribute("role", "separator");
+        rowMenu.appendChild(sep);
+        continue;
+      }
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "menu-item" + (item.danger ? " danger" : "");
+      btn.setAttribute("role", "menuitem");
+      btn.tabIndex = -1;
+      btn.textContent = item.label;
+      if (item.disabled) {
+        btn.disabled = true;
+        btn.setAttribute("aria-description", item.reason || "Unavailable");
+        btn.title = item.reason || "";
+      }
+      btn.addEventListener("click", function () {
+        const triggerEl = menuTrigger;
+        closeRowMenu(false);
+        item.run(triggerEl);
+      });
+      rowMenu.appendChild(btn);
+      if (item.primary && !item.disabled) defaultItem = btn;
+    }
+
+    rowMenu.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    positionMenu(trigger);
+
+    const enabled = rowMenu.querySelectorAll(".menu-item:not(:disabled)");
+    const target = defaultItem || enabled[0] || null;
+    if (target) target.focus();
+  }
+
+  function positionMenu(trigger) {
+    const rect = trigger.getBoundingClientRect();
+    const width = rowMenu.offsetWidth || 208;
+    const height = rowMenu.offsetHeight || 160;
+    let left = rect.right - width;
+    left = Math.max(8, Math.min(left, WINDOW_W - width - 8));
+    let top = rect.bottom + 4;
+    if (top + height > WINDOW_H - 8) top = Math.max(8, rect.top - height - 4);
+    rowMenu.style.left = Math.round(left) + "px";
+    rowMenu.style.top = Math.round(top) + "px";
+  }
+
+  function closeRowMenu(restoreFocus) {
+    if (rowMenu.hidden) return;
+    rowMenu.hidden = true;
+    rowMenu.textContent = "";
+    if (menuTrigger) menuTrigger.setAttribute("aria-expanded", "false");
+    const trigger = menuTrigger;
+    menuRepo = null;
+    menuTrigger = null;
+    if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+  }
+
+  async function runRepoUpdate(repo) {
+    const full = fullName(repo);
+    if (isUpdating()) return;
+    if (!currentGameDir) {
+      announce("Select an install first.", true);
+      installToggle.focus();
+      return;
+    }
+    announce("Updating " + full);
+    let res;
+    try {
+      res = await call("updateRepo", repo.owner, repo.name);
+    } catch (e) {
+      announce("Couldn't update " + full, true);
+      return;
+    }
+    if (isFailure(res)) {
+      announce("Couldn't update " + full, true);
+      return;
+    }
+    await load();
+  }
+
+  async function openGithub(repo) {
+    const full = fullName(repo);
+    const url = "https://github.com/" + repo.owner + "/" + repo.name;
+    let res;
+    try {
+      res = await call("openUrl", url);
+    } catch (e) {
+      announce("Couldn't open browser.", true);
+      return;
+    }
+    if (isFailure(res)) {
+      announce("Couldn't open browser.", true);
+      return;
+    }
+    announce("Opening " + full + " on GitHub");
+  }
+
+  async function copyRepoName(repo) {
+    const full = fullName(repo);
+    let res;
+    try {
+      res = await call("copyToClipboard", full);
+    } catch (e) {
+      announce("Couldn't copy " + full, true);
+      return;
+    }
+    if (isFailure(res)) {
+      announce("Couldn't copy " + full, true);
+      return;
+    }
+    announce("Copied " + full);
+  }
+
+  /* ------------------------------------------------------------- remove */
+
+  function openRemoveModal(repo, trigger) {
+    modalRepo = repo;
+    modalTrigger = trigger || null;
+    modalBody.textContent = "This will stop tracking " + fullName(repo) +
+      ". Installed files are kept.";
+    removeModal.hidden = false;
+    confirmRemove.disabled = false;
+    confirmRemove.textContent = "Remove";
+    cancelRemove.focus();
+  }
+
+  function closeRemoveModal(restoreFocus) {
+    if (removeModal.hidden) return;
+    removeModal.hidden = true;
+    const trigger = modalTrigger;
+    modalRepo = null;
+    modalTrigger = null;
+    if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+  }
+
+  async function confirmRemoveRepo() {
+    if (!modalRepo || removing) return;
+    const repo = modalRepo;
+    const full = fullName(repo);
+    const triggers = Array.prototype.slice.call(
+      listEl.querySelectorAll(".row-menu-trigger")
+    );
+    const index = modalTrigger ? triggers.indexOf(modalTrigger) : -1;
+
+    removing = true;
+    confirmRemove.disabled = true;
+    confirmRemove.textContent = "Removing…";
+
+    let ok = true;
+    try {
+      const res = await call("removeRepo", full);
+      if (isFailure(res)) ok = false;
+    } catch (e) {
+      ok = false;
+    }
+
+    removing = false;
+    confirmRemove.disabled = false;
+    confirmRemove.textContent = "Remove";
+    closeRemoveModal(false);
+    announce(ok ? "Removed " + full + " from tracking" : "Couldn't remove " + full, !ok);
+    await load();
+
+    if (ok) {
+      const nextTriggers = Array.prototype.slice.call(
+        listEl.querySelectorAll(".row-menu-trigger")
+      );
+      if (nextTriggers.length) {
+        const nextIndex = Math.min(Math.max(index, 0), nextTriggers.length - 1);
+        nextTriggers[nextIndex].focus();
+      } else {
+        listEl.focus();
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------- add */
+
+  function normalizeRepoInput(input) {
+    const malformed = "Use owner/name, for example cumsauce/newmod.";
+    let value = String(input || "").trim();
+    if (!value) return { ok: false, message: malformed };
+
+    const urlMatch = value.match(
+      /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+)\/([^/\s?#]+)\/?$/i
+    );
+    if (urlMatch) {
+      value = urlMatch[1] + "/" + urlMatch[2];
+    } else if (/:\/\//.test(value) || /^www\./i.test(value) ||
+               /^github\.com\//i.test(value) || /[?#]/.test(value)) {
+      return { ok: false, message: malformed };
+    }
+
+    if (/\s/.test(value)) return { ok: false, message: malformed };
+    const parts = value.split("/");
+    if (parts.length !== 2) return { ok: false, message: malformed };
+
+    const owner = parts[0];
+    const name = parts[1];
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(owner)) {
+      return { ok: false, message: malformed };
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === ".." ||
+        name.charAt(name.length - 1) === ".") {
+      return { ok: false, message: malformed };
+    }
+    return { ok: true, value: owner + "/" + name, owner: owner, name: name };
+  }
+
+  function addErrorMessage(res, value) {
+    const obj = res && typeof res === "object" ? res : {};
+    const code = String(obj.code || obj.kind || obj.errorCode || "").toLowerCase();
+    const message = String(
+      obj.error || obj.message || (typeof res === "string" ? res : "")
+    ).toLowerCase();
+    const blob = code + " " + message;
+    const reset = obj.resetAt || obj.reset || obj.retryAfter || "";
+
+    if (/rate|limit|403|429|too many/.test(blob)) {
+      return "GitHub rate limit reached. Try again after " +
+        (reset ? String(reset) : "a few minutes") + ".";
+    }
+    if (/already|duplicate|track/.test(blob)) {
+      return "This repository is already tracked.";
+    }
+    if (/jar|asset|compatible/.test(blob)) {
+      return "No compatible .jar release found for this install.";
+    }
+    if (/not.?found|404|unavailable|does not exist/.test(blob)) {
+      return "Repository not found or unavailable. Check owner/name.";
+    }
+    if (/offline|network|connect|timeout|timed out|dns|unreachable|refused/.test(blob)) {
+      return "Couldn't reach GitHub. Check your connection and retry.";
+    }
+    if (/malformed|invalid|owner\/name|format|usage/.test(blob)) {
+      return "Use owner/name, for example cumsauce/newmod.";
+    }
+    return "Couldn't add " + value + ". Try again.";
+  }
+
+  function setAddPending(on) {
+    addPending = on;
+    addBtn.disabled = on;
+    addBtn.textContent = on ? "Adding…" : "Add";
+    newRepo.readOnly = on;
+    if (on) {
+      addBtn.setAttribute("aria-description", "Adding repository");
+      newRepo.setAttribute("aria-busy", "true");
+    } else {
+      addBtn.removeAttribute("aria-description");
+      newRepo.removeAttribute("aria-busy");
+    }
+  }
+
+  function showAddError(message) {
+    addMsg.textContent = message;
+    addMsg.title = message;
+    newRepo.setAttribute("aria-invalid", "true");
+    announce(message, true);
+  }
+
+  function clearAddError() {
+    addMsg.textContent = "";
+    addMsg.title = "";
+    newRepo.removeAttribute("aria-invalid");
+  }
+
+  async function submitAdd() {
+    if (addPending) return;
+    const parsed = normalizeRepoInput(newRepo.value);
+    if (!parsed.ok) {
+      showAddError(parsed.message);
+      newRepo.focus();
+      return;
+    }
+    const duplicate = appState.repos.some(function (repo) {
+      return (repo.owner + "/" + repo.name).toLowerCase() === parsed.value.toLowerCase();
+    });
+    if (duplicate) {
+      showAddError("This repository is already tracked.");
+      newRepo.focus();
+      return;
+    }
+
+    clearAddError();
+    setAddPending(true);
+    let res;
+    try {
+      res = await call("addRepo", parsed.value);
+    } catch (e) {
+      res = null;
+    }
+    setAddPending(false);
+
+    if (asBool(res)) {
+      newRepo.value = "";
+      clearAddError();
+      pendingChecks.add(parsed.value.toLowerCase());
+      announce("Repository added");
+      await load();
+      newRepo.focus();
+      return;
+    }
+
+    showAddError(addErrorMessage(res, parsed.value));
+    newRepo.focus();
+  }
+
+  /* ------------------------------------------------------- install form */
+
+  async function validatePath(path) {
+    const value = String(path || "").trim();
+    if (!value) return { valid: false, message: "Enter a folder path." };
+    if (!hasBridge("validateFolder")) return { valid: true, message: "" };
+
+    let res;
+    try {
+      res = await call("validateFolder", value);
+    } catch (e) {
+      return { valid: false, message: "Couldn't check that folder." };
+    }
+    res = parseJSONish(res);
+    if (res && typeof res === "object") {
+      return {
+        valid: res.valid === true,
+        message: String(res.error || res.message || "")
+      };
+    }
+    if (res === true || res === "true") return { valid: true, message: "" };
+    if (res === false || res === "false") {
+      return { valid: false, message: "Folder doesn't exist or isn't writable." };
+    }
+    return { valid: true, message: "" };
+  }
+
+  function scheduleFolderValidation() {
+    const seq = ++folderCheckSeq;
+    const value = folder.value.trim();
+    folderValid = false;
+    updateSaveEnabled();
+    if (!value) {
+      showFolderMsg("", "");
+      return;
+    }
+    showFolderMsg("", "");
+    window.clearTimeout(folderTimer);
+    folderTimer = window.setTimeout(async function () {
+      const result = await validatePath(value);
+      if (seq !== folderCheckSeq) return;
+      folderValid = result.valid;
+      updateSaveEnabled();
+      if (!result.valid) {
+        showFolderMsg(result.message || "Folder doesn't exist or isn't writable.", "err");
+      }
+    }, 250);
   }
 
   async function saveFolder() {
-    showMsg(folderMsg, "", "");
-    let ok = false;
-    try { ok = asBool(await call("setMinecraftDir", folder.value)); } catch (e) {}
-    if (ok) {
-      setMenuOpen(false);
-      await load();  // re-read the path and refresh the selector label
-    } else {
-      showMsg(folderMsg, "Couldn't save folder.", "err");
-    }
-  }
-  $("save").addEventListener("click", saveFolder);
-  folder.addEventListener("keydown", (e) => { if (e.key === "Enter") saveFolder(); });
-
-  refreshBtn.addEventListener("click", async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    let started = false;
-    try { started = asBool(await call("startRefresh")); } catch (e) {}
-    if (!started) setRefreshing(false);  // already running or failed
-    // On "true": stay disabled until a renderState call arrives.
-  });
-
-  async function addRepo() {
-    const value = newRepo.value.trim();
-    showMsg(addMsg, "", "");
-    if (!value) {
-      showMsg(addMsg, "Enter owner/name.", "err");
+    if (savePending || isUpdating()) return;
+    const value = folder.value.trim();
+    const result = await validatePath(value);
+    if (!result.valid) {
+      showFolderMsg(result.message || "Folder doesn't exist or isn't writable.", "err");
+      folder.focus();
       return;
     }
-    let ok = false;
-    try { ok = asBool(await call("addRepo", value)); } catch (e) {}
-    if (ok) {
-      newRepo.value = "";
-    } else {
-      showMsg(addMsg, "Couldn't add " + value + ".", "err");
-    }
-    await load();  // re-fetch + re-render
-  }
-  $("add").addEventListener("click", addRepo);
-  newRepo.addEventListener("keydown", (e) => { if (e.key === "Enter") addRepo(); });
+    savePending = true;
+    saveFolderBtn.disabled = true;
+    saveFolderBtn.textContent = "Saving…";
+    updateSaveEnabled();
 
-  await load();
-  await loadLaunchers();
+    let ok = false;
+    try {
+      ok = asBool(await call("setMinecraftDir", value));
+    } catch (e) {
+      ok = false;
+    }
+
+    savePending = false;
+    saveFolderBtn.textContent = "Save";
+    updateSaveEnabled();
+
+    if (!ok) {
+      showFolderMsg("Couldn't save folder.", "err");
+      saveFolderBtn.disabled = false;
+      folder.focus();
+      return;
+    }
+    closeInstall(false);
+    installToggle.focus();
+    await Promise.all([load(), loadLaunchers()]);
+  }
+
+  async function rescan() {
+    if (scanning || isUpdating()) return;
+    scanning = true;
+    rescanBtn.disabled = true;
+    rescanBtn.textContent = "Scanning…";
+    announce("Scanning for installs");
+    await loadLaunchers();
+    scanning = false;
+    rescanBtn.disabled = false;
+    rescanBtn.textContent = "Rescan";
+    if (!installMenu.hidden) {
+      const target = installList.querySelector(".install-option[aria-selected='true']") ||
+        installList.querySelector(".install-option");
+      if (target) target.focus();
+      else folder.focus();
+    }
+    const count = launchers && Array.isArray(launchers.profiles) ? launchers.profiles.length : 0;
+    announce(count
+      ? "Found " + count + (count === 1 ? " install" : " installs")
+      : "No installs found");
+  }
+
+  async function updateAll() {
+    if (isUpdating()) return;
+    if (appState.repos.length === 0) return;
+    localUpdating = true;
+    renderChrome();
+
+    let ok = false;
+    try {
+      ok = asBool(await call("startRefresh"));
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) {
+      localUpdating = false;
+      renderChrome();
+      announce("Couldn't start the update.", true);
+      return;
+    }
+    announce("Updating all tracked mods");
+  }
+
+  /* --------------------------------------------------------- interaction */
+
+  installToggle.addEventListener("click", function () {
+    if (isUpdating()) {
+      announce("Install can't be changed while updates are running.", true);
+      return;
+    }
+    if (installMenu.hidden) openInstall();
+    else closeInstall(true);
+  });
+
+  installToggle.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    installToggle.click();
+  });
+
+  installList.addEventListener("keydown", function (e) {
+    const options = Array.prototype.slice.call(
+      installList.querySelectorAll(".install-option")
+    );
+    if (!options.length) return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" &&
+        e.key !== "Home" && e.key !== "End") return;
+    e.preventDefault();
+    const current = options.indexOf(document.activeElement);
+    let next = 0;
+    if (e.key === "End") next = options.length - 1;
+    else if (e.key === "ArrowDown") next = current < 0 ? 0 : Math.min(current + 1, options.length - 1);
+    else if (e.key === "ArrowUp") next = current < 0 ? options.length - 1 : Math.max(current - 1, 0);
+    setRoving(options, next);
+    options[next].focus();
+  });
+
+  installList.addEventListener("focusin", function (e) {
+    const option = e.target.closest ? e.target.closest(".install-option") : null;
+    if (option && option.id) installList.setAttribute("aria-activedescendant", option.id);
+  });
+
+  folder.addEventListener("input", scheduleFolderValidation);
+  folder.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveFolder();
+    }
+  });
+  saveFolderBtn.addEventListener("click", saveFolder);
+  rescanBtn.addEventListener("click", rescan);
+  refreshBtn.addEventListener("click", updateAll);
+
+  addBtn.addEventListener("click", submitAdd);
+  newRepo.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitAdd();
+    }
+  });
+
+  cancelRemove.addEventListener("click", function () {
+    closeRemoveModal(true);
+  });
+  confirmRemove.addEventListener("click", confirmRemoveRepo);
+  removeModal.addEventListener("click", function (e) {
+    if (e.target === removeModal) closeRemoveModal(true);
+  });
+  removeModal.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeRemoveModal(true);
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const focusable = [cancelRemove, confirmRemove].filter(function (btn) {
+      return !btn.disabled;
+    });
+    if (!focusable.length) return;
+    const index = focusable.indexOf(document.activeElement);
+    e.preventDefault();
+    let next;
+    if (e.shiftKey) next = index <= 0 ? focusable.length - 1 : index - 1;
+    else next = (index + 1) % focusable.length;
+    focusable[next].focus();
+  });
+
+  rowMenu.addEventListener("keydown", function (e) {
+    const items = Array.prototype.slice.call(
+      rowMenu.querySelectorAll(".menu-item:not(:disabled)")
+    );
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeRowMenu(true);
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      closeRowMenu(true);
+      return;
+    }
+    if (!items.length) return;
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" &&
+        e.key !== "Home" && e.key !== "End") return;
+    e.preventDefault();
+    const current = items.indexOf(document.activeElement);
+    let next = 0;
+    if (e.key === "End") next = items.length - 1;
+    else if (e.key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % items.length;
+    else if (e.key === "ArrowUp") next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length;
+    items[next].focus();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (!removeModal.hidden) {
+      e.preventDefault();
+      closeRemoveModal(true);
+      return;
+    }
+    if (!rowMenu.hidden) {
+      e.preventDefault();
+      closeRowMenu(true);
+      return;
+    }
+    if (!installMenu.hidden) {
+      e.preventDefault();
+      closeInstall(true);
+    }
+  });
+
+  document.addEventListener("click", function (e) {
+    const target = e.target;
+    if (!rowMenu.hidden && target &&
+        !rowMenu.contains(target) &&
+        !(target.closest && target.closest(".row-menu-trigger"))) {
+      closeRowMenu(false);
+    }
+    if (!installMenu.hidden && target &&
+        !installMenu.contains(target) &&
+        !installToggle.contains(target)) {
+      closeInstall(false);
+    }
+  });
+
+  /* ------------------------------------------------------------- tooltip */
+
+  function showTooltip(target, text) {
+    if (!text) return;
+    tooltip.textContent = text;
+    tooltip.hidden = false;
+    const rect = target.getBoundingClientRect();
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    let left = Math.max(8, Math.min(rect.left, WINDOW_W - width - 8));
+    let top = rect.bottom + 6;
+    if (top + height > WINDOW_H - 8) top = Math.max(8, rect.top - height - 6);
+    tooltip.style.left = Math.round(left) + "px";
+    tooltip.style.top = Math.round(top) + "px";
+  }
+
+  function hideTooltip() {
+    tooltip.hidden = true;
+  }
+
+  document.addEventListener("focusin", function (e) {
+    const target = e.target && e.target.closest ? e.target.closest("[data-tip]") : null;
+    if (target) showTooltip(target, target.getAttribute("data-tip"));
+    else hideTooltip();
+  });
+  document.addEventListener("focusout", hideTooltip);
+
+  /* ----------------------------------------------------------------- boot */
+
+  function boot() {
+    if (booted) return;
+    booted = true;
+
+    if (window.__pendingState) {
+      const pending = window.__pendingState;
+      window.__pendingState = null;
+      window.__applyState(pending);
+    }
+
+    renderAll();
+    load().then(loadLaunchers);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  } else {
+    boot();
+  }
 })();
 </script>
 </body>
