@@ -67,14 +67,14 @@ body {
 button { user-select: none; -webkit-user-select: none; }
 
 /* flush sections, full-bleed hairline dividers (Uber) */
-.section { padding: 12px 16px 14px; }
+.section { padding: 8px 16px 10px; }
 .section + .section { border-top: 1px solid var(--divider); }
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .section-head h2 {
   font: 600 13px/1.3 var(--sans);
@@ -83,10 +83,12 @@ button { user-select: none; -webkit-user-select: none; }
   margin: 0;
 }
 .head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.head-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .summary {
-  font: 12px/1.4 var(--mono);
+  font: 11.5px/1.4 var(--mono);
   color: var(--faint);
-  margin: -4px 0 8px;
+  margin: 0;
+  white-space: nowrap;
 }
 .summary[hidden] { display: none; }
 .summary b { font-weight: 400; color: var(--ok); }
@@ -116,8 +118,8 @@ button { user-select: none; -webkit-user-select: none; }
 
 /* buttons: tiered by style, uniform size; slightly rounded (Discord) */
 .btn {
-  height: 28px;
-  padding: 0 11px;
+  height: 26px;
+  padding: 0 10px;
   border-radius: 2px;
   border: none;
   font: 600 12.5px/1 var(--sans);
@@ -143,9 +145,9 @@ button { user-select: none; -webkit-user-select: none; }
 /* inputs */
 .label {
   display: block;
-  font: 600 12px/1.3 var(--sans);
-  color: var(--dim);
-  margin-bottom: 6px;
+  font: 500 11px/1.3 var(--sans);
+  color: var(--faint);
+  margin-bottom: 4px;
 }
 .input-row { display: flex; align-items: center; gap: 8px; }
 .input {
@@ -190,8 +192,8 @@ button { user-select: none; -webkit-user-select: none; }
 /* per-author group heading (mono, quiet); rules sit between groups only */
 .group-head {
   margin: 2px -16px 0;
-  padding: 10px 16px 6px;
-  font: 600 11px/1.3 var(--mono);
+  padding: 6px 16px 3px;
+  font: 600 10.5px/1.3 var(--mono);
   color: var(--faint);
   white-space: nowrap;
   overflow: hidden;
@@ -204,11 +206,17 @@ button { user-select: none; -webkit-user-select: none; }
   flex-direction: column;
   gap: 4px;
   margin: 0 -16px;
-  padding: 7px 16px;
+  padding: 4px 16px;
   border-radius: 0;
   transition: background-color .1s linear;
 }
 .item:hover { background: var(--hover); }
+/* per-row Remove is destructive and repetitive: keep it out of the way until
+   the row is hovered or focused, so the data columns stay scannable. */
+.item .btn-danger { opacity: 0; }
+.item:hover .btn-danger,
+.item:focus-within .btn-danger { opacity: 1; }
+@media (hover: none) { .item .btn-danger { opacity: 1; } }
 .item.launched {
   box-shadow: inset 3px 0 0 var(--primary-hover);
   background: rgba(110,86,207,0.08);
@@ -250,24 +258,23 @@ button { user-select: none; -webkit-user-select: none; }
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   max-width: 40%;
   min-width: 0;
-  padding: 3px 9px;
+  padding: 2px 8px;
   border-radius: 999px;
   background: var(--mute-tint);
-  font: 11px/1.5 var(--mono);
+  font: 10.5px/1.5 var(--mono);
   white-space: nowrap;
   overflow: hidden;
   flex-shrink: 1;
 }
 .chip .dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
-  box-shadow: 0 0 5px currentColor;
 }
 .chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chip-ok { color: var(--ok); background: var(--ok-tint); }
@@ -276,16 +283,76 @@ button { user-select: none; -webkit-user-select: none; }
 .chip-mute { color: var(--dim); }
 
 /* rows compress when the list is long */
-.list.dense .item { padding-top: 5px; padding-bottom: 5px; gap: 4px; }
+.list.dense .item { gap: 3px; }
 
-/* empty states — quiet, actionable; action under the copy */
-.empty { padding: 6px 0 2px; }
-.empty .btn { margin-top: 10px; }
+/* add-repo sits inline under the list, not in a section at the bottom of a
+   window that already scrolls — the action stays next to what it affects. */
+.inline-add { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+
+/* empty states — quiet, actionable */
+.empty { padding: 4px 0 0; }
 .empty-title { font: 600 13.5px/1.4 var(--sans); color: var(--text); margin: 0 0 4px; }
 .empty-body { font: 13px/1.5 var(--sans); color: var(--dim); margin: 0; }
 .empty > :last-child { margin-bottom: 0; }
 
 :focus-visible { outline: 2px solid var(--fuchsia); outline-offset: 2px; }
+
+/* dark, thin scrollbar — the platform default is a bright bar on near-black */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(167,159,188,0.22);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(167,159,188,0.38); background-clip: padding-box; }
+
+/* indeterminate bar while a refresh is in flight: the button label alone was
+   the only sign anything was happening. */
+.progress {
+  position: relative;
+  height: 2px;
+  margin: 0 -16px 6px;
+  overflow: hidden;
+  background: var(--divider);
+}
+.progress::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 38%;
+  background: var(--primary-hover);
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* inline destructive confirm — replaces the native confirm() dialog so the
+   window keeps its own chrome. */
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -16px 6px;
+  padding: 6px 16px;
+  background: var(--err-tint);
+  border-top: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+}
+.confirm-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 12px/1.4 var(--sans);
+  color: var(--dim);
+}
+.confirm .btn-outline.danger { color: var(--err); border-color: rgba(251,113,133,0.35); }
+.confirm .btn-outline.danger:hover:not(:disabled) {
+  background: var(--err-tint);
+  border-color: var(--err);
+}
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
@@ -295,12 +362,12 @@ button { user-select: none; -webkit-user-select: none; }
    same x across all rows (left-aligned, easy to scan). */
 .mod-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px 136px auto;
+  grid-template-columns: minmax(0, 150px) 92px minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 10px;
   min-width: 0;
 }
-.cols-head { margin: 0 -16px; padding: 2px 16px 4px; }
+.cols-head { margin: 0 -16px; padding: 0 16px 2px; }
 .cols-head .mod-row > span {
   font: 11px/1.4 var(--sans);
   color: var(--faint);
@@ -345,31 +412,45 @@ button { user-select: none; -webkit-user-select: none; }
 
   <section class="section">
     <div class="section-head">
-      <h2>Tracked mods</h2>
+      <div class="head-title">
+        <h2>Tracked mods</h2>
+        <span class="summary" id="summary" hidden></span>
+      </div>
       <div class="head-actions">
         <button type="button" id="restore" class="btn btn-ghost">Restore defaults</button>
         <button type="button" id="refresh" class="btn btn-primary">Refresh all</button>
       </div>
     </div>
-    <p class="summary" id="summary" hidden></p>
+    <div class="progress" id="progress" hidden></div>
+    <div id="restore-confirm" class="confirm" hidden>
+      <span class="confirm-text">Replace tracked repos with the defaults file?</span>
+      <button type="button" id="restore-cancel" class="btn btn-ghost">Cancel</button>
+      <button type="button" id="restore-yes" class="btn btn-outline danger">Restore</button>
+    </div>
     <ul id="list" class="list"></ul>
     <div id="empty" class="empty">
       <p class="empty-title">No tracked repos yet</p>
       <p class="empty-body">Add your first with owner/name below.</p>
     </div>
+    <div class="inline-add">
+      <input id="new-repo" class="input" type="text" placeholder="Add a repo: owner/name"
+             aria-label="Repository to track, as owner/name"
+             spellcheck="false" autocomplete="off">
+      <button type="button" id="add" class="btn btn-outline">Add</button>
+    </div>
+    <div id="add-msg" class="msg"></div>
     <div id="restore-msg" class="msg"></div>
   </section>
 
   <section class="section">
     <div class="section-head">
       <h2>Detected launchers</h2>
-      <button type="button" id="rescan" class="btn btn-ghost js-rescan" hidden>Rescan</button>
+      <button type="button" id="rescan" class="btn btn-ghost js-rescan">Rescan</button>
     </div>
     <ul id="launchers" class="list"></ul>
     <div id="launchers-empty" class="empty">
       <p class="empty-title" id="launchers-empty-title">Not scanned yet</p>
-      <p class="empty-body" id="launchers-empty-body">Click Rescan to look for installed Prism and Modrinth profiles.</p>
-      <button type="button" class="btn btn-outline js-rescan">Rescan</button>
+      <p class="empty-body" id="launchers-empty-body">Look for installed Prism and Modrinth profiles.</p>
     </div>
     <div id="launchers-errors" class="msg"></div>
   </section>
@@ -383,17 +464,6 @@ button { user-select: none; -webkit-user-select: none; }
       <button type="button" id="save" class="btn btn-outline">Save</button>
     </div>
     <div id="folder-msg" class="msg"></div>
-  </section>
-
-  <section class="section">
-    <div class="section-head"><h2>Add a repo</h2></div>
-    <label class="label" for="new-repo">Repository</label>
-    <div class="input-row">
-      <input id="new-repo" class="input" type="text" placeholder="e.g. owner/name"
-             spellcheck="false" autocomplete="off">
-      <button type="button" id="add" class="btn btn-outline">Add</button>
-    </div>
-    <div id="add-msg" class="msg"></div>
   </section>
 </main>
 <script>
@@ -413,7 +483,8 @@ button { user-select: none; -webkit-user-select: none; }
   const launchersEmptyTitle = $("launchers-empty-title");
   const launchersEmptyBody = $("launchers-empty-body");
   const launchersErrors = $("launchers-errors");
-  const rescanHeader = $("rescan");
+  const progressEl = $("progress");
+  const restoreConfirm = $("restore-confirm");
 
   let refreshing = false;
   let currentGameDir = "";
@@ -439,6 +510,7 @@ button { user-select: none; -webkit-user-select: none; }
     refreshing = on;
     refreshBtn.disabled = on;
     refreshBtn.textContent = on ? "Refreshing…" : "Refresh all";
+    progressEl.hidden = !on;
   }
 
   // Normalize a version tag for display: add a leading "v" to bare numbers.
@@ -615,7 +687,6 @@ button { user-select: none; -webkit-user-select: none; }
     const none = profiles.length === 0;
 
     launchersEmpty.hidden = !none;
-    rescanHeader.hidden = none;
     if (none) {
       launchersEmptyTitle.textContent = "No launcher profiles found";
       launchersEmptyBody.textContent =
@@ -730,8 +801,16 @@ button { user-select: none; -webkit-user-select: none; }
     btn.addEventListener("click", () => loadLaunchers());
   });
 
-  $("restore").addEventListener("click", async () => {
-    if (!confirm("Replace your tracked repos with the defaults file?")) return;
+  $("restore").addEventListener("click", () => {
+    restoreConfirm.hidden = false;
+    $("restore-yes").focus();
+  });
+  $("restore-cancel").addEventListener("click", () => {
+    restoreConfirm.hidden = true;
+    $("restore").focus();
+  });
+  $("restore-yes").addEventListener("click", async () => {
+    restoreConfirm.hidden = true;
     let ok = false;
     try { ok = asBool(await call("restoreDefaults")); } catch (e) {}
     showMsg(restoreMsg, ok ? "" : "Couldn't restore defaults.", ok ? "" : "err");
