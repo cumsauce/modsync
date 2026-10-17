@@ -13,6 +13,29 @@ const os = @import("os.zig");
 const Config = config_mod.Config;
 const Repo = config_mod.Repo;
 
+/// CGRect/NSRect layout as four doubles (origin.x, origin.y, size.w, size.h).
+/// Used to pass a frame to `-[NSView setFrame:]` through `objc_msgSend`.
+const NSRect = extern struct { x: f64, y: f64, w: f64, h: f64 };
+
+/// `mouseDown:` implementation for the transparent titlebar drag strip.
+/// Hands the mouse-down to AppKit's window-drag routine.
+fn dragMouseDown(self: ?*anyopaque, _: ?*anyopaque, event: ?*anyopaque) callconv(.c) void {
+    const msgObj2 = @extern(
+        *const fn (?*anyopaque, ?*anyopaque) callconv(.c) ?*anyopaque,
+        .{ .name = "objc_msgSend" },
+    );
+    const msgObjVoid = @extern(
+        *const fn (?*anyopaque, ?*anyopaque, ?*anyopaque) callconv(.c) void,
+        .{ .name = "objc_msgSend" },
+    );
+    const s = @extern(
+        *const fn ([*:0]const u8) callconv(.c) ?*anyopaque,
+        .{ .name = "sel_registerName" },
+    );
+    const win = msgObj2(self, s("window"));
+    if (win) |w| msgObjVoid(w, s("performWindowDragWithEvent:"), event);
+}
+
 // ============================================================================
 // Pure launchers-JSON builder (unit-testable offline)
 // ============================================================================
@@ -97,13 +120,19 @@ pub const RepoStatus = struct {
     /// Release tag that could be installed while the repo is NOT installed
     /// (drives "Available release vX"), else null.
     available_version: ?[]const u8 = null,
+    /// Cached `data:image/png;base64,...` icon read from the installed jar,
+    /// or null when the repo is not installed / its jar has no PNG icon.
+    icon: ?[]const u8 = null,
+    /// True once `icon` has been resolved against the installed jar, so a jar
+    /// without an icon is not re-read on every state push. Never serialized.
+    icon_loaded: bool = false,
 };
 
 /// Emit the JSON blob the UI renders:
 /// `{"minecraftDir":"...","updating":false,"repos":[{"owner":...,"name":...,
 /// "installedVersion":"v0.1.3"|null,"installedJar":...|null,"status":"...",
 /// "latestVersion":"v0.1.4"|null,"stage":"idle","error":null,
-/// "availableVersion":null}, ...]}`.
+/// "availableVersion":null,"icon":null}, ...]}`.
 /// Each entry of `statuses` is paired with the repo whose `owner` AND `name`
 /// match it (linear scan — the config can mutate mid-refresh, so index
 /// pairing would drift); repos with no matching status get an empty status.
@@ -180,6 +209,16 @@ pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []cons
         } else {
             try out.appendSlice(allocator, "null");
         }
+        try out.appendSlice(allocator, ",\"icon\":");
+        if (match) |m| {
+            if (m.icon) |icon| {
+                try appendJsonString(allocator, &out, icon);
+            } else {
+                try out.appendSlice(allocator, "null");
+            }
+        } else {
+            try out.appendSlice(allocator, "null");
+        }
         try out.appendSlice(allocator, "}");
     }
 
@@ -192,6 +231,93 @@ fn appendJsonString(allocator: Allocator, out: *std.ArrayList(u8), s: []const u8
     const encoded = try std.json.Stringify.valueAlloc(allocator, s, .{});
     defer allocator.free(encoded);
     try out.appendSlice(allocator, encoded);
+}
+
+// ============================================================================
+// Mod-jar icons (the same PNG Minecraft shows in its mod list)
+// ============================================================================
+
+/// Largest icon we are willing to inline, in decoded PNG bytes.
+const max_jar_icon_bytes: u64 = 256 * 1024;
+const png_magic = [4]u8{ 0x89, 'P', 'N', 'G' };
+const icon_data_url_prefix = "data:image/png;base64,";
+
+/// Rank an archive entry as a mod icon. Lower wins:
+/// 0 `assets/*/icon.png`, 1 `assets/*/logo.png`, 2 unused,
+/// 3 root `icon.png`, 4 root `logo.png`, 5 root `pack.png`.
+/// Returns null for everything else.
+fn jarIconRank(name: []const u8) ?u8 {
+    if (std.mem.eql(u8, name, "icon.png")) return 3;
+    if (std.mem.eql(u8, name, "logo.png")) return 4;
+    if (std.mem.eql(u8, name, "pack.png")) return 5;
+
+    const prefix = "assets/";
+    if (!std.mem.startsWith(u8, name, prefix)) return null;
+
+    const candidates = [_]struct { suffix: []const u8, rank: u8 }{
+        .{ .suffix = "/icon.png", .rank = 0 },
+        .{ .suffix = "/logo.png", .rank = 1 },
+    };
+    for (candidates) |cand| {
+        if (!std.mem.endsWith(u8, name, cand.suffix)) continue;
+        if (name.len < prefix.len + cand.suffix.len) return null;
+        const mid = name[prefix.len .. name.len - cand.suffix.len];
+        // Exactly one namespace segment: assets/<name>/<file>.
+        if (mid.len == 0 or std.mem.indexOfScalar(u8, mid, '/') != null) return null;
+        return cand.rank;
+    }
+    return null;
+}
+
+/// Extract the best mod icon from a jar and return an allocator-owned
+/// `data:image/png;base64,...` URL, or null on ANY failure. Never crashes and
+/// never returns a non-PNG payload.
+fn loadJarIcon(allocator: Allocator, jar_path: []const u8) ?[]u8 {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    return loadJarIconIo(allocator, io, jar_path);
+}
+
+fn loadJarIconIo(allocator: Allocator, io: std.Io, jar_path: []const u8) ?[]u8 {
+    var file = std.Io.Dir.cwd().openFile(io, jar_path, .{}) catch return null;
+    defer file.close(io);
+
+    var read_buf: [16 * 1024]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+    var iter = std.zip.Iterator.init(&reader) catch return null;
+
+    var best: ?std.zip.Iterator.Entry = null;
+    var best_rank: u8 = std.math.maxInt(u8);
+    var name_buf: [512]u8 = undefined;
+
+    while (iter.next() catch return null) |entry| {
+        if (entry.uncompressed_size > max_jar_icon_bytes) continue;
+        const name = entry.getFilename(&reader, &name_buf, .{}) catch continue;
+        if (name.len == 0 or name[name.len - 1] == '/') continue; // directory
+        const rank = jarIconRank(name) orelse continue;
+        if (rank < best_rank) {
+            best_rank = rank;
+            best = entry;
+        }
+        if (best_rank == 0) break; // nothing outranks assets/*/icon.png
+    }
+
+    const entry = best orelse return null;
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    entry.extractTo(&reader, &aw.writer) catch return null;
+    const bytes = aw.toOwnedSlice() catch return null;
+    defer allocator.free(bytes);
+
+    if (bytes.len > max_jar_icon_bytes) return null;
+    if (bytes.len < png_magic.len) return null;
+    if (!std.mem.eql(u8, bytes[0..png_magic.len], &png_magic)) return null;
+
+    const encoded_len = std.base64.standard.Encoder.calcSize(bytes.len);
+    const out = allocator.alloc(u8, icon_data_url_prefix.len + encoded_len) catch return null;
+    @memcpy(out[0..icon_data_url_prefix.len], icon_data_url_prefix);
+    _ = std.base64.standard.Encoder.encode(out[icon_data_url_prefix.len..], bytes);
+    return out;
 }
 
 // ============================================================================
@@ -260,7 +386,11 @@ pub const App = struct {
     /// may slice the global seed from `defaultRepos()`) is left untouched.
     pub fn init(allocator: Allocator, cfg: Config) !App {
         const owned = try cloneConfig(allocator, cfg);
-        return .{ .allocator = allocator, .cfg = owned };
+        var app = App{ .allocator = allocator, .cfg = owned };
+        // Resolve jar icons before the first getConfig so installed rows paint
+        // with their real icon immediately instead of flashing a letter.
+        app.ensureIconsLocked();
+        return app;
     }
 
     /// Build the startup App from an optional loaded config. When `loaded` is
@@ -318,6 +448,10 @@ pub const App = struct {
             *const fn (id_t, id_t, id_t) callconv(.c) id_t,
             .{ .name = "objc_msgSend" },
         );
+        const msgObj2 = @extern(
+            *const fn (id_t, id_t) callconv(.c) id_t,
+            .{ .name = "objc_msgSend" },
+        );
         const msgBool = @extern(
             *const fn (id_t, id_t, i32) callconv(.c) id_t,
             .{ .name = "objc_msgSend" },
@@ -338,6 +472,26 @@ pub const App = struct {
         const s = @extern(
             *const fn ([*:0]const u8) callconv(.c) id_t,
             .{ .name = "sel_registerName" },
+        );
+        const msgObjVoid = @extern(
+            *const fn (id_t, id_t, id_t) callconv(.c) void,
+            .{ .name = "objc_msgSend" },
+        );
+        const msgRect = @extern(
+            *const fn (id_t, id_t, NSRect) callconv(.c) void,
+            .{ .name = "objc_msgSend" },
+        );
+        const allocClassPair = @extern(
+            *const fn (id_t, [*:0]const u8, usize) callconv(.c) id_t,
+            .{ .name = "objc_allocateClassPair" },
+        );
+        const addMethod = @extern(
+            *const fn (id_t, id_t, *const anyopaque, [*:0]const u8) callconv(.c) i8,
+            .{ .name = "class_addMethod" },
+        );
+        const registerClassPair = @extern(
+            *const fn (id_t) callconv(.c) void,
+            .{ .name = "objc_registerClassPair" },
         );
 
         const nsw = c.webview_get_native_handle(
@@ -363,6 +517,27 @@ pub const App = struct {
         _ = msgBool(nsw, s("setTitlebarAppearsTransparent:"), 1);
         _ = msgBool(nsw, s("setTitleVisibility:"), 1);
         _ = msgBool(nsw, s("setMovableByWindowBackground:"), 1);
+
+        // `setMovableByWindowBackground:` alone can't move the window here:
+        // WKWebView consumes the mouse events across the whole content view.
+        // Add a transparent native strip over the top 34px whose `mouseDown:`
+        // starts a window drag, so the UI's own top bar drags like a titlebar.
+        const content = msgObj2(nsw, s("contentView"));
+        const nsview_cls = getClass("NSView") orelse return;
+        const drag_cls = allocClassPair(nsview_cls, "ModsyncDragView", 0);
+        if (drag_cls) |cls| {
+            _ = addMethod(cls, s("mouseDown:"), @ptrCast(&dragMouseDown), "v@:@");
+            registerClassPair(cls);
+        }
+        const strip_cls = drag_cls orelse nsview_cls;
+        const strip = msgObj2(msgObj2(strip_cls, s("alloc")), s("init"));
+        if (strip) |view| {
+            msgRect(view, s("setFrame:"), .{ .x = 0, .y = 606, .w = 520, .h = 34 });
+            // Width-sizable (2) + flexible bottom margin (8) pins it to the top
+            // edge when the window is resized.
+            _ = msgUL(view, s("setAutoresizingMask:"), 2 | 8);
+            if (content) |cv| msgObjVoid(cv, s("addSubview:"), view);
+        }
     }
 
     /// Create the webview, load the embedded UI document, bind the JS
@@ -546,6 +721,45 @@ pub const App = struct {
         const copy = self.allocator.dupe(u8, text) catch return;
         self.allocator.free(s.status);
         s.status = copy;
+    }
+
+    /// Cache the icon extracted from the repo's installed jar (duplicated),
+    /// or clear it when the jar has none. Caller holds `mutex`.
+    fn setIcon(self: *App, owner: []const u8, name: []const u8, icon: ?[]const u8) void {
+        const s = self.ensureStateLocked(owner, name) catch return;
+        self.setOwnedLocked(&s.icon, icon);
+        s.icon_loaded = true;
+    }
+
+    /// Make every tracked repo's cached icon match its installed jar. Repos
+    /// without a jar have their icon cleared; a jar without an icon caches
+    /// null so it is not re-read on every state push. Caller holds `mutex`
+    /// (or calls before the App is shared). Never fails.
+    fn ensureIconsLocked(self: *App) void {
+        for (self.cfg.repos) |repo| {
+            const s = self.ensureStateLocked(repo.owner, repo.name) catch continue;
+            const jar = repo.installedJar orelse {
+                self.setOwnedLocked(&s.icon, null);
+                s.icon_loaded = false;
+                continue;
+            };
+            if (s.icon_loaded) continue;
+
+            const mods = install.modsDir(self.allocator, self.cfg.minecraftDir) catch continue;
+            defer self.allocator.free(mods);
+            const path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ mods, jar }) catch continue;
+            defer self.allocator.free(path);
+
+            const icon = loadJarIcon(self.allocator, path);
+            self.setIconOwned(&s.icon, icon);
+            s.icon_loaded = true;
+        }
+    }
+
+    /// `setOwnedLocked` variant that also releases the caller's copy.
+    fn setIconOwned(self: *App, slot: *?[]const u8, icon: ?[]const u8) void {
+        self.setOwnedLocked(slot, icon);
+        if (icon) |bytes| self.allocator.free(bytes);
     }
 
     /// First stage of an update: mark the row "checking" and drop stale error
@@ -782,6 +996,13 @@ pub const App = struct {
         }
         self.mutex.unlock();
 
+        // Cache the freshly placed jar's icon for the next state snapshot.
+        const new_icon = loadJarIcon(self.allocator, jar_path);
+        defer if (new_icon) |bytes| self.allocator.free(bytes);
+        self.mutex.lock();
+        self.setIcon(repo.owner, repo.name, new_icon);
+        self.mutex.unlock();
+
         var status_buf: [192]u8 = undefined;
         const status_text = std.fmt.bufPrint(&status_buf, "installed {s}", .{fetched.tag}) catch "installed";
         self.markSuccess(repo.owner, repo.name, status_text);
@@ -988,6 +1209,9 @@ fn cbGetConfig(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.
 
     app.mutex.lock();
     defer app.mutex.unlock();
+    // Lazy one-time load for rows whose jar landed outside this process (or
+    // before the icon cache existed); no-ops once every row is resolved.
+    app.ensureIconsLocked();
     const json = buildStateJson(
         app.allocator,
         &app.cfg,
@@ -1453,6 +1677,7 @@ fn freeStatus(allocator: Allocator, s: RepoStatus) void {
     if (s.latest) |v| allocator.free(v);
     if (s.err) |v| allocator.free(v);
     if (s.available_version) |v| allocator.free(v);
+    if (s.icon) |v| allocator.free(v);
 }
 
 /// Format GitHub's rate-limit reset epoch as the UI copy. Returns null on OOM
@@ -1520,6 +1745,34 @@ test "buildStateJson: installed repo row carries owner, name, version, jar, stat
     try std.testing.expect(std.mem.indexOf(u8, json, "\"installed v0.1.2\"") != null);
 }
 
+test "buildStateJson: cached jar icon serializes as a data URL" {
+    const icon = "data:image/png;base64,iVBORw0KGgo=";
+    var repos = [1]Repo{
+        .{ .owner = "a", .name = "b", .installedVersion = "v1", .installedJar = "b.jar" },
+    };
+    const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
+    const statuses = [1]RepoStatus{
+        .{ .owner = "a", .name = "b", .status = "up to date", .icon = icon },
+    };
+
+    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses, false);
+    defer std.testing.allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, ",\"icon\":\"data:image/png;base64,iVBORw0KGgo=\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, ",\"icon\":null") == null);
+}
+
+test "jarIconRank prefers namespaced icon, then logo, then root files" {
+    try std.testing.expectEqual(@as(?u8, 0), jarIconRank("assets/foo/icon.png"));
+    try std.testing.expectEqual(@as(?u8, 1), jarIconRank("assets/foo/logo.png"));
+    try std.testing.expectEqual(@as(?u8, 3), jarIconRank("icon.png"));
+    try std.testing.expectEqual(@as(?u8, 4), jarIconRank("logo.png"));
+    try std.testing.expectEqual(@as(?u8, 5), jarIconRank("pack.png"));
+    try std.testing.expectEqual(@as(?u8, null), jarIconRank("assets/foo/other.png"));
+    try std.testing.expectEqual(@as(?u8, null), jarIconRank("assets/icon.png"));
+    try std.testing.expectEqual(@as(?u8, null), jarIconRank("assets/a/b/icon.png"));
+}
+
 test "buildStateJson: no-releases row plus null installedVersion serializes as null" {
     var repos = [2]Repo{
         .{ .owner = "cumsauce", .name = "gore", .installedVersion = null, .installedJar = null },
@@ -1569,8 +1822,8 @@ test "buildStateJson: statuses pair by owner+name, not by index" {
 
     // Rows come out in cfg.repos order, each carrying the status that
     // matched ITS owner+name (not whatever happened to share an index):
-    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\",\"latestVersion\":\"v0.1.2\",\"stage\":\"idle\",\"error\":null,\"availableVersion\":null}";
-    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\",\"latestVersion\":null,\"stage\":\"idle\",\"error\":null,\"availableVersion\":null}";
+    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\",\"latestVersion\":\"v0.1.2\",\"stage\":\"idle\",\"error\":null,\"availableVersion\":null,\"icon\":null}";
+    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\",\"latestVersion\":null,\"stage\":\"idle\",\"error\":null,\"availableVersion\":null,\"icon\":null}";
     const gore_at = std.mem.indexOf(u8, json, gore_row) orelse return error.TestUnexpectedResult;
     const surprise_at = std.mem.indexOf(u8, json, surprise_row) orelse return error.TestUnexpectedResult;
     try std.testing.expect(gore_at < surprise_at);

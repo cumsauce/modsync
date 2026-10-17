@@ -377,7 +377,13 @@ h1, h2, h3, p { margin: 0; }
   background: var(--tile);
   color: var(--dim);
 }
-.glyph { width: 14px; height: 14px; display: block; }
+.icon-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
 .tile-letter {
   font: 600 11px/1 var(--sans);
   color: var(--dim);
@@ -910,7 +916,8 @@ h1, h2, h3, p { margin: 0; }
       latestVersion: r.latestVersion == null ? "" : String(r.latestVersion),
       availableVersion: r.availableVersion == null ? "" : String(r.availableVersion),
       stage: typeof r.stage === "string" ? r.stage : "idle",
-      error: r.error == null ? "" : String(r.error)
+      error: r.error == null ? "" : String(r.error),
+      icon: typeof r.icon === "string" ? r.icon : ""
     };
   }
 
@@ -1214,7 +1221,7 @@ h1, h2, h3, p { margin: 0; }
     const tile = document.createElement("div");
     tile.className = "icon-tile";
     tile.setAttribute("aria-hidden", "true");
-    tile.appendChild(repoGlyph(repo));
+    tile.appendChild(repoTileContent(repo));
 
     const identity = document.createElement("span");
     identity.className = "identity";
@@ -1313,37 +1320,19 @@ h1, h2, h3, p { margin: 0; }
     return el;
   }
 
-  function repoGlyph(repo) {
-    const name = String(repo.name || "").toLowerCase();
-    const paths = {
-      foley: ["M3 10v4", "M7 7v10", "M11 9v6", "M15 5v14", "M19 8v8"],
-      doorswing: ["M6 21V3h9v18", "M15 12h3"],
-      earshot: [
-        "M7 8a5 5 0 0 1 10 0c0 2.6-2.6 3.6-3.2 6.1a2.8 2.8 0 0 1-5.4-.6",
-        "M9.4 19.6A3.4 3.4 0 0 0 12.8 22"
-      ],
-      stalker: ["M12 3c3 4 6 7 6 10a6 6 0 1 1-12 0c0-3 3-6 6-10z"]
-    };
-    if (paths[name]) {
-      const svg = document.createElementNS(SVG_NS, "svg");
-      svg.setAttribute("class", "glyph");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "1.6");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.setAttribute("aria-hidden", "true");
-      for (const d of paths[name]) {
-        const path = document.createElementNS(SVG_NS, "path");
-        path.setAttribute("d", d);
-        svg.appendChild(path);
-      }
-      return svg;
+  function repoTileContent(repo) {
+    const icon = typeof repo.icon === "string" ? repo.icon : "";
+    if (icon) {
+      const img = document.createElement("img");
+      img.className = "icon-img";
+      img.alt = "";
+      img.setAttribute("aria-hidden", "true");
+      img.src = icon;
+      return img;
     }
     const letter = document.createElement("span");
     letter.className = "tile-letter";
-    letter.textContent = (name.charAt(0) || "?").toUpperCase();
+    letter.textContent = (String(repo.name || "").charAt(0) || "?").toUpperCase();
     return letter;
   }
 
