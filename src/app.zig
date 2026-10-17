@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const builtin = @import("builtin");
 
 const c = @import("webview_api");
 
@@ -196,6 +197,76 @@ pub const App = struct {
         self.cfg = undefined;
     }
 
+    // =========================================================================
+    // macOS integrated chrome (Discord-style): content fills the window and
+    // the UI's own top strip acts as the header. Implemented with ObjC runtime
+    // calls on the NSWindow the webview shim owns; no-ops on other platforms.
+    // =========================================================================
+
+    /// Blend the webview into the title bar: the window content extends
+    /// under the title strip (fullSizeContentView) while the strip itself is
+    /// transparent and textless, so the UI's own 34px `.topbar` acts as the
+    /// header and the traffic lights overlay its left spacer. Background
+    /// drag still moves the window.
+    ///
+    /// ABI note: the style mask must be handed to `objc_msgSend` as a full
+    /// 64-bit NSUInteger through a non-variadic `callconv(.c)` pointer — a
+    /// narrower/malformed argument made AppKit read the full-screen bit and
+    /// throw `NSGenericException`, which is what crashed earlier builds.
+    fn integrateTitlebar(wv: ?*anyopaque) void {
+        if (builtin.os.tag != .macos) return; // cross-platform guard
+        const id_t = ?*anyopaque;
+        const msgObj = @extern(
+            *const fn (id_t, id_t, id_t) callconv(.c) id_t,
+            .{ .name = "objc_msgSend" },
+        );
+        const msgBool = @extern(
+            *const fn (id_t, id_t, i32) callconv(.c) id_t,
+            .{ .name = "objc_msgSend" },
+        );
+        const msgF4 = @extern(
+            *const fn (id_t, id_t, f64, f64, f64, f64) callconv(.c) id_t,
+            .{ .name = "objc_msgSend" },
+        );
+        // NSUInteger-typed argument: 64-bit, non-variadic (see ABI note).
+        const msgUL = @extern(
+            *const fn (id_t, id_t, u64) callconv(.c) void,
+            .{ .name = "objc_msgSend" },
+        );
+        const getClass = @extern(
+            *const fn ([*:0]const u8) callconv(.c) id_t,
+            .{ .name = "objc_getClass" },
+        );
+        const s = @extern(
+            *const fn ([*:0]const u8) callconv(.c) id_t,
+            .{ .name = "sel_registerName" },
+        );
+
+        const nsw = c.webview_get_native_handle(
+            @ptrCast(wv),
+            c.WEBVIEW_NATIVE_HANDLE_KIND_UI_WINDOW,
+        ) orelse return;
+
+        // Titled | closable | miniaturizable | resizable | fullSizeContentView
+        // — content runs under the title strip and its traffic lights.
+        msgUL(nsw, s("setStyleMask:"), 15 | 32768);
+
+        // Background matching --bg (#0B0A10) so the strip is invisible.
+        const color_cls = getClass("NSColor") orelse return;
+        const dark = msgF4(
+            color_cls,
+            s("colorWithSRGBRed:green:blue:alpha:"),
+            0.04314,
+            0.03922,
+            0.06275,
+            1.0,
+        );
+        _ = msgObj(nsw, s("setBackgroundColor:"), dark);
+        _ = msgBool(nsw, s("setTitlebarAppearsTransparent:"), 1);
+        _ = msgBool(nsw, s("setTitleVisibility:"), 1);
+        _ = msgBool(nsw, s("setMovableByWindowBackground:"), 1);
+    }
+
     /// Create the webview, load the embedded UI document, bind the JS
     /// callables (passing `*App` as the C callback arg), and run the event
     /// loop until the window closes.
@@ -207,7 +278,7 @@ pub const App = struct {
         _ = c.webview_set_title(w, "modsync");
         _ = c.webview_set_size(w, 520, 640, c.WEBVIEW_HINT_NONE);
         _ = c.webview_set_html(w, ui_html);
-
+        if (builtin.os.tag == .macos) integrateTitlebar(w);
         const app_arg: ?*anyopaque = self;
         _ = c.webview_bind(w, "getConfig", cbGetConfig, app_arg);
         _ = c.webview_bind(w, "setMinecraftDir", cbSetMinecraftDir, app_arg);
