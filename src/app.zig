@@ -36,6 +36,18 @@ fn dragMouseDown(self: ?*anyopaque, _: ?*anyopaque, event: ?*anyopaque) callconv
     if (win) |w| msgObjVoid(w, s("performWindowDragWithEvent:"), event);
 }
 
+/// Lets AppKit itself move the window when this view is clicked — the
+/// standard hook for custom titlebar views. Used alongside `mouseDown:`.
+fn dragCanMoveWindow(_: ?*anyopaque, _: ?*anyopaque) callconv(.c) i8 {
+    return 1;
+}
+
+/// Accept the first click even when the window is inactive, so a drag
+/// doesn't need a prior focusing click.
+fn dragAcceptsFirstMouse(_: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) i8 {
+    return 1;
+}
+
 // ============================================================================
 // Pure launchers-JSON builder (unit-testable offline)
 // ============================================================================
@@ -481,6 +493,10 @@ pub const App = struct {
             *const fn (id_t, id_t, NSRect) callconv(.c) void,
             .{ .name = "objc_msgSend" },
         );
+        const msgRectRet = @extern(
+            *const fn (id_t, id_t) callconv(.c) NSRect,
+            .{ .name = "objc_msgSend" },
+        );
         const allocClassPair = @extern(
             *const fn (id_t, [*:0]const u8, usize) callconv(.c) id_t,
             .{ .name = "objc_allocateClassPair" },
@@ -527,12 +543,18 @@ pub const App = struct {
         const drag_cls = allocClassPair(nsview_cls, "ModsyncDragView", 0);
         if (drag_cls) |cls| {
             _ = addMethod(cls, s("mouseDown:"), @ptrCast(&dragMouseDown), "v@:@");
+            _ = addMethod(cls, s("mouseDownCanMoveWindow"), @ptrCast(&dragCanMoveWindow), "c@:");
+            _ = addMethod(cls, s("acceptsFirstMouse:"), @ptrCast(&dragAcceptsFirstMouse), "c@:@");
             registerClassPair(cls);
         }
         const strip_cls = drag_cls orelse nsview_cls;
         const strip = msgObj2(msgObj2(strip_cls, s("alloc")), s("init"));
         if (strip) |view| {
-            msgRect(view, s("setFrame:"), .{ .x = 0, .y = 606, .w = 520, .h = 34 });
+            // Place the strip on the TOP 34pt using the content view's real
+            // height (NSView's origin is bottom-left, so top = height - 34).
+            const bounds = if (content) |cv| msgRectRet(cv, s("bounds")) else NSRect{ .x = 0, .y = 0, .w = 520, .h = 640 };
+            const h: f64 = if (bounds.h > 34) bounds.h else 640;
+            msgRect(view, s("setFrame:"), .{ .x = 0, .y = h - 34, .w = bounds.w, .h = 34 });
             // Width-sizable (2) + flexible bottom margin (8) pins it to the top
             // edge when the window is resized.
             _ = msgUL(view, s("setAutoresizingMask:"), 2 | 8);
