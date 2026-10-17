@@ -58,11 +58,16 @@ pub const RepoStatus = struct {
     owner: []const u8,
     name: []const u8,
     status: []const u8,
+    /// Latest release tag seen during the fetch that produced `status`
+    /// (null when the fetch failed or no refresh has run yet). Lets the UI
+    /// derive outdated = installedVersion != latestVersion.
+    latest: ?[]const u8 = null,
 };
 
 /// Emit the JSON blob the UI (Task 7) renders:
 /// `{"minecraftDir":"...","repos":[{"owner":...,"name":...,"installedVersion":
-/// "v0.1.3"|null,"installedJar":...|null,"status":"..."}, ...]}`.
+/// "v0.1.3"|null,"installedJar":...|null,"status":"...","latestVersion":
+/// "v0.1.4"|null}, ...]}`.
 /// Each entry of `statuses` is paired with the repo whose `owner` AND `name`
 /// match it (linear scan — the config can mutate mid-refresh, so index
 /// pairing would drift); repos with no matching status get an empty status.
@@ -95,15 +100,26 @@ pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []cons
             try out.appendSlice(allocator, "null");
         }
         try out.appendSlice(allocator, ",\"status\":");
-        const status: []const u8 = blk: {
-            for (statuses) |s| {
+        const match: ?*const RepoStatus = blk: {
+            for (statuses) |*s| {
                 if (std.mem.eql(u8, s.owner, repo.owner) and std.mem.eql(u8, s.name, repo.name)) {
-                    break :blk s.status;
+                    break :blk s;
                 }
             }
-            break :blk "";
+            break :blk null;
         };
+        const status: []const u8 = if (match) |m| m.status else "";
         try appendJsonString(allocator, &out, status);
+        try out.appendSlice(allocator, ",\"latestVersion\":");
+        if (match) |m| {
+            if (m.latest) |lv| {
+                try appendJsonString(allocator, &out, lv);
+            } else {
+                try out.appendSlice(allocator, "null");
+            }
+        } else {
+            try out.appendSlice(allocator, "null");
+        }
         try out.appendSlice(allocator, "}");
     }
 
@@ -395,8 +411,10 @@ pub const App = struct {
     /// Fetch the latest release for one repo and install it if needed.
     /// Returns an allocator-owned status string for the UI row ("up to date",
     /// "installed vX", "no releases", "no jar asset", "error: <name>").
+    /// On a successful fetch, writes an allocator-owned dupe of the latest
+    /// tag into `latest_out` (null on any failure; caller frees).
     /// Never aborts — every failure becomes a status string.
-    fn refreshRepo(self: *App, client: *std.http.Client, minecraft_dir: []const u8, token: ?[]const u8, repo: Repo) []const u8 {
+    fn refreshRepo(self: *App, client: *std.http.Client, minecraft_dir: []const u8, token: ?[]const u8, repo: Repo, latest_out: *?[]const u8) []const u8 {
         const fetched = net.fetchLatestAsset(self.allocator, client, repo.owner, repo.name, token) catch |err| {
             return switch (err) {
                 error.NoReleases => self.allocator.dupe(u8, "no releases") catch unreachable,
@@ -404,6 +422,7 @@ pub const App = struct {
                 else => std.fmt.allocPrint(self.allocator, "error: {s}", .{@errorName(err)}) catch unreachable,
             };
         } orelse return self.allocator.dupe(u8, "no releases") catch unreachable;
+        latest_out.* = self.allocator.dupe(u8, fetched.tag) catch null;
         defer {
             self.allocator.free(fetched.tag);
             self.allocator.free(fetched.name);
@@ -513,7 +532,12 @@ pub const App = struct {
         const statuses = self.allocator.alloc(RepoStatus, repos.len) catch return;
         var statuses_built: usize = 0;
         defer self.allocator.free(statuses);
-        defer for (statuses[0..statuses_built]) |s| self.allocator.free(s.status);
+        defer {
+            for (statuses[0..statuses_built]) |s| {
+                self.allocator.free(s.status);
+                if (s.latest) |l| self.allocator.free(l);
+            }
+        }
 
         // One HTTP client for the whole run (struct literal; no init fn).
         var threaded = std.Io.Threaded.init(self.allocator, .{});
@@ -521,8 +545,9 @@ pub const App = struct {
         defer client.deinit();
 
         for (repos, 0..) |repo, i| {
-            const status = self.refreshRepo(&client, minecraft_dir, token, repo);
-            statuses[i] = .{ .owner = repo.owner, .name = repo.name, .status = status };
+            var latest: ?[]const u8 = null;
+            const status = self.refreshRepo(&client, minecraft_dir, token, repo, &latest);
+            statuses[i] = .{ .owner = repo.owner, .name = repo.name, .status = status, .latest = latest };
             statuses_built = i + 1;
 
             self.mutex.lock();
@@ -925,7 +950,7 @@ test "buildStateJson: statuses pair by owner+name, not by index" {
     const statuses = [3]RepoStatus{
         .{ .owner = "desocketed", .name = "surprise", .status = "no releases" },
         .{ .owner = "ghost", .name = "removed", .status = "stale status" },
-        .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2" },
+        .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2", .latest = "v0.1.2" },
     };
 
     const json = try buildStateJson(std.testing.allocator, &cfg, &statuses);
@@ -942,8 +967,8 @@ test "buildStateJson: statuses pair by owner+name, not by index" {
 
     // Rows come out in cfg.repos order, each carrying the status that
     // matched ITS owner+name (not whatever happened to share an index):
-    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\"}";
-    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\"}";
+    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\",\"latestVersion\":\"v0.1.2\"}";
+    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\",\"latestVersion\":null}";
     const gore_at = std.mem.indexOf(u8, json, gore_row) orelse return error.TestUnexpectedResult;
     const surprise_at = std.mem.indexOf(u8, json, surprise_row) orelse return error.TestUnexpectedResult;
     try std.testing.expect(gore_at < surprise_at);

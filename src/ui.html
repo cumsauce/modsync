@@ -289,6 +289,50 @@ button { user-select: none; -webkit-user-select: none; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* --- tracked-mod rows: one line, shared column tracks -------------------
+   Every row uses the same grid so name | installed | status start at the
+   same x across all rows (left-aligned, easy to scan). */
+.mod-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px 136px auto;
+  align-items: center;
+  column-gap: 10px;
+  min-width: 0;
+}
+.cols-head { margin: 0 -16px; padding: 2px 16px 4px; }
+.cols-head .mod-row > span {
+  font: 11px/1.4 var(--sans);
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-name {
+  font: 500 13.5px/1.4 var(--sans);
+  color: var(--text);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-ver {
+  font: 12px/1.4 var(--mono);
+  color: var(--dim);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-ver.none { color: var(--faint); }
+.cell-status { min-width: 0; }
+.cell-status .chip { max-width: 100%; }
+/* status colors — contrast >= 4.5:1 on the #0B0A10 background */
+.chip-latest   { color: #3FB97F; background: rgba(63,185,127,0.13); }
+.chip-outdated { color: #E3A341; background: rgba(227,163,65,0.14); }
+.chip-missing  { color: #E5646E; background: rgba(229,100,110,0.13); }
+.chip-danger   { color: #F26D78; background: rgba(242,109,120,0.13); }
+.chip-none     { color: #8A83A0; background: rgba(138,131,160,0.10); }
 </style>
 </head>
 <body>
@@ -397,43 +441,76 @@ button { user-select: none; -webkit-user-select: none; }
     refreshBtn.textContent = on ? "Refreshing…" : "Refresh all";
   }
 
-  function chipClass(repo) {
-    const s = String(repo.status || "").toLowerCase();
-    if (s.includes("error") || s.includes("fail")) return "chip-err";
-    if (s.includes("no release")) return "chip-info";
-    if (repo.installedVersion) return "chip-ok";
-    return "chip-mute";
+  // Normalize a version tag for display: add a leading "v" to bare numbers.
+  function prettyVersion(v) {
+    const t = String(v || "");
+    if (!t) return "—";
+    return /^\d/.test(t) ? "v" + t : t;
+  }
+
+  // One-line status derivation for a tracked repo:
+  //   error       → fetch/install failed (danger; short message shown)
+  //   no release  → GitHub reported no releases / no jar asset
+  //   missing     → checked, but nothing is installed
+  //   outdated    → installed, and the latest known tag differs
+  //   latest      → installed and up to date with the latest tag
+  //   not checked → no refresh has reported on this repo yet
+  function statusInfo(repo) {
+    const raw = String(repo.status || "").trim();
+    const s = raw.toLowerCase();
+    const installed = String(repo.installedVersion || "");
+    const latest = String(repo.latestVersion || "");
+    if (s.includes("error") || s.includes("fail")) {
+      return { cls: "chip-danger", text: raw || "error", detail: raw || "error" };
+    }
+    if (s.includes("no jar")) {
+      return { cls: "chip-none", text: "no jar asset", detail: raw };
+    }
+    if (s.includes("no release")) {
+      return { cls: "chip-none", text: "no release", detail: raw };
+    }
+    if (!installed) {
+      if (!raw) return { cls: "chip-none", text: "not checked", detail: "Not checked yet" };
+      return { cls: "chip-missing", text: "missing", detail: "Not installed" };
+    }
+    if (s === "up to date" || s.startsWith("installed ")) {
+      return {
+        cls: "chip-latest",
+        text: "latest",
+        detail: "Installed " + prettyVersion(installed) + " (up to date)",
+      };
+    }
+    if (latest) {
+      return latest === installed
+        ? {
+            cls: "chip-latest",
+            text: "latest",
+            detail: "Installed " + prettyVersion(installed) + " (up to date)",
+          }
+        : {
+            cls: "chip-outdated",
+            text: "outdated",
+            detail:
+              "Installed " + prettyVersion(installed) +
+              " · latest " + prettyVersion(latest),
+          };
+    }
+    if (!raw) return { cls: "chip-none", text: "not checked", detail: "Not checked yet" };
+    return { cls: "chip-none", text: raw, detail: raw };
   }
 
   function statusChip(repo) {
-    const raw = String(repo.status || "").trim();
-    const cls = chipClass(repo);
-    // One chip carries the whole state: an error or "no release" message,
-    // else the installed version once there is one, else not-checked.
-    let text;
-    if (cls === "chip-err" || cls === "chip-info") {
-      text = raw;
-    } else if (repo.installedVersion) {
-      text = raw && raw.toLowerCase() !== "not checked" ? raw : versionText(repo);
-    } else {
-      text = raw || "not checked";
-    }
+    const info = statusInfo(repo);
     const chip = document.createElement("span");
-    chip.className = "chip " + chipClass(repo);
-    chip.title = text;
+    chip.className = "chip " + info.cls;
+    chip.title = info.detail;
     const dot = document.createElement("span");
     dot.className = "dot";
     const label = document.createElement("span");
     label.className = "chip-text";
-    label.textContent = text;
+    label.textContent = info.text;
     chip.append(dot, label);
     return chip;
-  }
-
-  function versionText(repo) {
-    const v = String(repo.installedVersion || "");
-    if (!v) return "not installed";
-    return /^\d/.test(v) ? "v" + v : v;
   }
 
   function rowFor(repo, owner) {
@@ -443,17 +520,25 @@ button { user-select: none; -webkit-user-select: none; }
     const li = document.createElement("li");
     li.className = "item";
 
-    // Single line: mod name, its state as one chip, remove at the right.
-    const line1 = document.createElement("div");
-    line1.className = "row-l1";
+    // One line, shared grid columns: name | installed version | status | Remove.
+    const row = document.createElement("div");
+    row.className = "mod-row";
 
-    const idBox = document.createElement("div");
-    idBox.className = "row-id";
     const nameSpan = document.createElement("span");
-    nameSpan.className = "name";
+    nameSpan.className = "cell-name";
     nameSpan.textContent = name;
     nameSpan.title = full;
-    idBox.append(nameSpan);
+
+    const ver = document.createElement("span");
+    ver.className = "cell-ver" + (repo.installedVersion ? "" : " none");
+    ver.textContent = prettyVersion(repo.installedVersion);
+    ver.title = repo.installedVersion
+      ? "Installed " + prettyVersion(repo.installedVersion)
+      : "Not installed";
+
+    const statusCell = document.createElement("span");
+    statusCell.className = "cell-status";
+    statusCell.appendChild(statusChip(repo));
 
     const rm = document.createElement("button");
     rm.type = "button";
@@ -466,8 +551,8 @@ button { user-select: none; -webkit-user-select: none; }
       await load();  // re-fetch + re-render
     });
 
-    line1.append(idBox, statusChip(repo), rm);
-    li.append(line1);
+    row.append(nameSpan, ver, statusCell, rm);
+    li.append(row);
     return li;
   }
 
@@ -481,6 +566,20 @@ button { user-select: none; -webkit-user-select: none; }
       const owner = String(repo.owner || "");
       if (!groups.has(owner)) groups.set(owner, []);
       groups.get(owner).push(repo);
+    }
+    // Column header aligned to the same grid as every row (sentence case).
+    if (repos.length > 0) {
+      const colsHead = document.createElement("li");
+      colsHead.className = "cols-head";
+      const headGrid = document.createElement("div");
+      headGrid.className = "mod-row";
+      for (const label of ["Mod", "Installed", "Status", ""]) {
+        const span = document.createElement("span");
+        span.textContent = label;
+        headGrid.appendChild(span);
+      }
+      colsHead.appendChild(headGrid);
+      list.appendChild(colsHead);
     }
     for (const [owner, items] of groups) {
       const head = document.createElement("li");
