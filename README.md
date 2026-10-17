@@ -19,17 +19,24 @@ Grab the asset for your platform from the
 
 | Platform | Asset |
 |----------|-------|
-| macOS (Apple Silicon) | `modsync-macos-arm64` |
-| Linux (x86_64) | `modsync-linux-x86_64` |
+| macOS (Apple Silicon) | `modsync-macos-arm64.tar.gz` |
+| Linux (x86_64) | `modsync-linux-x86_64.tar.gz` |
 | Windows (x86_64) | `modsync-windows-x86_64.exe` |
 
-The macOS binary is **unsigned**, so Gatekeeper warns on first launch. Either
-right-click → Open, or:
+macOS and Linux ship as `.tar.gz` because a release asset carries no POSIX
+permission bits — a bare binary always downloads as non-executable. Extracting
+the archive gives you a `modsync` that runs directly:
 
 ```sh
-chmod +x modsync-macos-arm64
-xattr -d com.apple.quarantine modsync-macos-arm64
-./modsync-macos-arm64
+tar -xzf modsync-macos-arm64.tar.gz
+./modsync
+```
+
+The macOS binary is **unsigned**, so Gatekeeper warns on first launch. Either
+right-click → Open, or clear the quarantine flag once:
+
+```sh
+xattr -d com.apple.quarantine modsync
 ```
 
 macOS and Linux assets are built and tested in CI. The Windows asset is built

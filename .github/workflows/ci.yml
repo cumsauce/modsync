@@ -110,11 +110,11 @@ jobs:
         include:
           - os: macos-14
             name: macos-arm64
-            asset: modsync-macos-arm64
+            asset: modsync-macos-arm64.tar.gz
             zig: zig-aarch64-macos-0.17.0.tar.xz
           - os: ubuntu-latest
             name: linux-x86_64
-            asset: modsync-linux-x86_64
+            asset: modsync-linux-x86_64.tar.gz
             zig: zig-x86_64-linux-0.17.0.tar.xz
           - os: windows-latest
             name: windows-x86_64
@@ -179,9 +179,16 @@ jobs:
             zig build -Doptimize=ReleaseSafe
           fi
 
+      # Release assets are opaque blobs served over HTTPS: they carry no POSIX
+      # permission bits, so a bare binary always downloads as 644 and every
+      # user has to chmod +x it. tar stores the mode in its header, so
+      # extraction hands back an already-executable file.
       - name: Stage artifact (unix)
         if: runner.os != 'Windows'
-        run: cp zig-out/bin/modsync "${{ matrix.asset }}"
+        run: |
+          test -x zig-out/bin/modsync
+          tar -czf "${{ matrix.asset }}" -C zig-out/bin modsync
+          tar -tvzf "${{ matrix.asset }}"
 
       - name: Stage artifact (windows)
         if: runner.os == 'Windows'
@@ -220,13 +227,21 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes "modsync ${GITHUB_REF_NAME}.
 
-          Download the asset for your platform:
-          - macOS (Apple Silicon): modsync-macos-arm64
-          - Linux (x86_64): modsync-linux-x86_64
+          Download the archive for your platform:
+          - macOS (Apple Silicon): modsync-macos-arm64.tar.gz
+          - Linux (x86_64): modsync-linux-x86_64.tar.gz
           - Windows (x86_64): modsync-windows-x86_64.exe
 
-          macOS note: the binary is unsigned, so Gatekeeper will warn on first launch.
-          Either right-click the file and choose Open, or run:
-          xattr -d com.apple.quarantine modsync-macos-arm64  (then chmod +x it).
+          macOS / Linux: extract and run. The binary inside the archive is
+          already executable -- no chmod needed.
+
+              tar -xzf modsync-macos-arm64.tar.gz
+              ./modsync
+
+          macOS note: the binary is unsigned, so Gatekeeper will warn on first
+          launch. Either right-click it and choose Open, or clear the quarantine
+          flag once:
+
+              xattr -d com.apple.quarantine modsync
 
           Linux/Windows assets are built and linked in CI but not runtime-tested."
