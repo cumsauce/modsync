@@ -7,6 +7,11 @@ pub const Repo = struct {
     name: []const u8,
     installedVersion: ?[]const u8 = null,
     installedJar: ?[]const u8 = null,
+    /// Per-mod kill switch. When true the installed jar is renamed to
+    /// `<jar>.disabled` (Fabric/Forge ignore such files) and the repo is
+    /// skipped entirely by the update pipeline — no check, no download, no
+    /// refresh — until the user turns it back on.
+    disabled: bool = false,
 };
 
 pub const ProfileRef = struct {
@@ -70,7 +75,7 @@ fn parseDefaults(allocator: Allocator, json: []const u8) ![]Repo {
         errdefer allocator.free(owner);
         const name = try allocator.dupe(u8, s.name);
         errdefer allocator.free(name);
-        d.* = .{ .owner = owner, .name = name };
+        d.* = .{ .owner = owner, .name = name, .disabled = s.disabled };
         built += 1;
     }
     return out;
@@ -291,6 +296,7 @@ fn dupeConfig(allocator: Allocator, src: Config) !Config {
             .name = name,
             .installedVersion = installed_version,
             .installedJar = installed_jar,
+            .disabled = s.disabled,
         };
         built += 1;
     }
@@ -335,6 +341,17 @@ test "parseDefaults reads a user defaults.json blob" {
     try std.testing.expectEqualStrings("q", repos[1].name);
 }
 
+test "parseDefaults carries the disabled flag through the copy" {
+    const repos = try parseDefaults(std.testing.allocator,
+        \\{ "repos": [ { "owner": "x", "name": "y", "disabled": true }, { "owner": "p", "name": "q" } ] }
+    );
+    defer freeRepos(std.testing.allocator, repos);
+    try std.testing.expectEqual(@as(usize, 2), repos.len);
+    try std.testing.expect(repos[0].disabled);
+    // Absent key → the struct default, false.
+    try std.testing.expect(!repos[1].disabled);
+}
+
 test "configPath is absolute and ends in modsync/config.json" {
     const path = try configPath(std.testing.allocator);
     defer std.testing.allocator.free(path);
@@ -362,6 +379,7 @@ test "Config round-trips through saveTo/loadFrom as pretty JSON" {
         .name = "b",
         .installedVersion = "v0.1.2",
         .installedJar = "gore-0.1.2.jar",
+        .disabled = true,
     };
     const cfg = Config{
         .minecraftDir = "/tmp/mc",
@@ -376,6 +394,9 @@ test "Config round-trips through saveTo/loadFrom as pretty JSON" {
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"/tmp/mc\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"v0.1.2\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\"gore-0.1.2.jar\"") != null);
+    // The per-repo kill switch survives serialization (value copy, not a
+    // pointer field).
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "\"disabled\": true") != null);
     // Pretty serialization → newline + 2-space indent (indent_2, not minified).
     try std.testing.expect(std.mem.indexOf(u8, bytes, "\n  ") != null);
 
@@ -389,6 +410,7 @@ test "Config round-trips through saveTo/loadFrom as pretty JSON" {
     try std.testing.expectEqualStrings("b", loaded.repos[0].name);
     try std.testing.expectEqualStrings("v0.1.2", loaded.repos[0].installedVersion.?);
     try std.testing.expectEqualStrings("gore-0.1.2.jar", loaded.repos[0].installedJar.?);
+    try std.testing.expect(loaded.repos[0].disabled);
 
     // Absent file → null, not an error (pinned behavior).
     try std.testing.expect((try loadFrom(std.testing.allocator, "/tmp/modsync-absent-does-not-exist.json")) == null);
@@ -448,4 +470,6 @@ test "a pre-v0.2 config without selectedProfile loads with it null" {
     try std.testing.expect(loaded.selectedProfile == null);
     try std.testing.expectEqualStrings("/tmp/mc", loaded.minecraftDir);
     try std.testing.expectEqual(@as(usize, 1), loaded.repos.len);
+    // A pre-v0.3 config has no "disabled" key at all → the struct default.
+    try std.testing.expect(!loaded.repos[0].disabled);
 }

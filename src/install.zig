@@ -127,6 +127,31 @@ pub fn placeJar(modsDirPath: []const u8, tmpPath: []const u8, jarName: []const u
     };
 }
 
+/// Rename `modsDirPath/jarName` to `modsDirPath/<jarName>.disabled` (or back),
+/// the per-mod kill switch: loaders only pick up `*.jar`, so a `.disabled`
+/// file is ignored while staying on disk. Enabling deletes a stale plain-name
+/// jar first (best-effort) so a rare race — a plain jar reappearing between
+/// toggles — can't turn the revert rename into a no-op failure.
+pub fn setJarDisabled(allocator: Allocator, modsDirPath: []const u8, jarName: []const u8, disabled: bool) !void {
+    var threaded = makeThreaded();
+    const io = threaded.io();
+
+    const plain = try std.fs.path.join(allocator, &.{ modsDirPath, jarName });
+    defer allocator.free(plain);
+
+    const suffixed_name = try std.fmt.allocPrint(allocator, "{s}.disabled", .{jarName});
+    defer allocator.free(suffixed_name);
+    const suffixed = try std.fs.path.join(allocator, &.{ modsDirPath, suffixed_name });
+    defer allocator.free(suffixed);
+
+    if (disabled) {
+        try std.Io.Dir.renameAbsolute(plain, suffixed, io);
+    } else {
+        std.Io.Dir.deleteFileAbsolute(io, plain) catch {};
+        try std.Io.Dir.renameAbsolute(suffixed, plain, io);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests (real temp dirs under /tmp)
 // ---------------------------------------------------------------------------
@@ -227,4 +252,41 @@ test "placeJar moves the tmp jar into mods/ and removes the tmp file" {
         break :blk true;
     };
     try std.testing.expect(!tmp_still_there);
+}
+
+test "setJarDisabled renames the jar to .disabled and reverts it" {
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
+    const io = threaded.io();
+
+    const root = "/tmp/modsync-task-disable";
+    const base = "/tmp/modsync-task-disable/mc";
+    std.Io.Dir.cwd().deleteTree(io, root) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, root) catch {};
+
+    try ensureModsDir(base);
+    const dir = try modsDir(std.testing.allocator, base);
+    defer std.testing.allocator.free(dir);
+
+    const plain = try std.fs.path.join(std.testing.allocator, &.{ dir, "gore-0.1.2.jar" });
+    defer std.testing.allocator.free(plain);
+    const off = try std.fs.path.join(std.testing.allocator, &.{ dir, "gore-0.1.2.jar.disabled" });
+    defer std.testing.allocator.free(off);
+
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = plain, .data = "fake jar bytes" });
+
+    // Disable: plain jar moves aside, nothing keeps the .jar suffix.
+    try setJarDisabled(std.testing.allocator, dir, "gore-0.1.2.jar", true);
+    const plain_gone = if (std.Io.Dir.cwd().access(io, plain, .{})) true else |_| false;
+    try std.testing.expect(!plain_gone);
+    std.Io.Dir.cwd().access(io, off, .{}) catch return error.ExpectedDisabledJarPresent;
+
+    // Re-enable: a stale plain-name jar left by an interrupted toggle must not
+    // make the revert a no-op — the disabled copy wins.
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = plain, .data = "stale bytes" });
+    try setJarDisabled(std.testing.allocator, dir, "gore-0.1.2.jar", false);
+    const off_gone = if (std.Io.Dir.cwd().access(io, off, .{})) true else |_| false;
+    try std.testing.expect(!off_gone);
+    const restored = try std.Io.Dir.cwd().readFileAlloc(io, plain, std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(restored);
+    try std.testing.expectEqualStrings("fake jar bytes", restored);
 }

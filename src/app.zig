@@ -138,13 +138,20 @@ pub const RepoStatus = struct {
     /// True once `icon` has been resolved against the installed jar, so a jar
     /// without an icon is not re-read on every state push. Never serialized.
     icon_loaded: bool = false,
+    /// Mirror of `Repo.disabled` for this row: set when the state row is
+    /// built (against the config) and kept in sync by the toggle binding.
+    /// Non-threaded like the rest of the row; the config flag stays the
+    /// authority (a row with no state entry yet still reports its config).
+    disabled: bool = false,
 };
 
 /// Emit the JSON blob the UI renders:
 /// `{"minecraftDir":"...","updating":false,"repos":[{"owner":...,"name":...,
-/// "installedVersion":"v0.1.3"|null,"installedJar":...|null,"status":"...",
-/// "latestVersion":"v0.1.4"|null,"stage":"idle","error":null,
+/// "installedVersion":"v0.1.3"|null,"installedJar":...|null,"disabled":false,
+/// "status":"...","latestVersion":"v0.1.4"|null,"stage":"idle","error":null,
 /// "availableVersion":null,"icon":null}, ...]}`.
+/// `disabled` is the per-mod kill switch (`Repo.disabled`, OR the state-row
+/// mirror) — the UI derives the "Disabled" state from it, never from `status`.
 /// Each entry of `statuses` is paired with the repo whose `owner` AND `name`
 /// match it (linear scan — the config can mutate mid-refresh, so index
 /// pairing would drift); repos with no matching status get an empty status.
@@ -162,6 +169,14 @@ pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []cons
 
     for (cfg.repos, 0..) |repo, i| {
         if (i > 0) try out.appendSlice(allocator, ",");
+        const match: ?*const RepoStatus = blk: {
+            for (statuses) |*s| {
+                if (std.mem.eql(u8, s.owner, repo.owner) and std.mem.eql(u8, s.name, repo.name)) {
+                    break :blk s;
+                }
+            }
+            break :blk null;
+        };
         try out.appendSlice(allocator, "{\"owner\":");
         try appendJsonString(allocator, &out, repo.owner);
         try out.appendSlice(allocator, ",\"name\":");
@@ -178,15 +193,12 @@ pub fn buildStateJson(allocator: Allocator, cfg: *const Config, statuses: []cons
         } else {
             try out.appendSlice(allocator, "null");
         }
+        // Kill switch: config flag first, state-row mirror as belt-and-braces
+        // (a row whose config flag just flipped reads true either way).
+        const disabled = repo.disabled or (if (match) |m| m.disabled else false);
+        try out.appendSlice(allocator, ",\"disabled\":");
+        try out.appendSlice(allocator, if (disabled) "true" else "false");
         try out.appendSlice(allocator, ",\"status\":");
-        const match: ?*const RepoStatus = blk: {
-            for (statuses) |*s| {
-                if (std.mem.eql(u8, s.owner, repo.owner) and std.mem.eql(u8, s.name, repo.name)) {
-                    break :blk s;
-                }
-            }
-            break :blk null;
-        };
         const status: []const u8 = if (match) |m| m.status else "";
         try appendJsonString(allocator, &out, status);
         try out.appendSlice(allocator, ",\"latestVersion\":");
@@ -579,6 +591,7 @@ pub const App = struct {
         _ = c.webview_bind(w, "setMinecraftDir", cbSetMinecraftDir, app_arg);
         _ = c.webview_bind(w, "addRepo", cbAddRepo, app_arg);
         _ = c.webview_bind(w, "removeRepo", cbRemoveRepo, app_arg);
+        _ = c.webview_bind(w, "toggleRepo", cbToggleRepo, app_arg);
         _ = c.webview_bind(w, "startRefresh", cbStartRefresh, app_arg);
         _ = c.webview_bind(w, "listLaunchers", cbListLaunchers, app_arg);
         _ = c.webview_bind(w, "selectProfile", cbSelectProfile, app_arg);
@@ -723,6 +736,7 @@ pub const App = struct {
             .owner = owner_copy,
             .name = name_copy,
             .status = status_copy,
+            .disabled = self.repoDisabledLocked(owner, name),
         };
 
         if (self.repo_states.len != 0) self.allocator.free(self.repo_states);
@@ -871,6 +885,15 @@ pub const App = struct {
         return false;
     }
 
+    /// The config's `disabled` flag for `owner`/`name` (false when untracked).
+    /// Caller holds `mutex`.
+    fn repoDisabledLocked(self: *App, owner: []const u8, name: []const u8) bool {
+        for (self.cfg.repos) |r| {
+            if (std.mem.eql(u8, r.owner, owner) and std.mem.eql(u8, r.name, name)) return r.disabled;
+        }
+        return false;
+    }
+
     /// Mark `owner`/`name` as the repo the worker is touching. The remove
     /// binding rejects removing exactly this repo until it is cleared.
     fn markWriting(self: *App, owner: []const u8, name: []const u8) void {
@@ -903,6 +926,11 @@ pub const App = struct {
     /// every stage; the all-repos batch pushes one coherent snapshot at the
     /// end instead, leaving pre-run versions/counts untouched while it runs.
     fn updateOne(self: *App, client: *std.http.Client, minecraft_dir: []const u8, token: ?[]const u8, repo: Repo, single: bool) void {
+        // A disabled repo stays untouched by the whole pipeline: no stage, no
+        // status change, no push — a single-repo update is a silent no-op.
+        // (The worker's snapshot filter already skips these; this guards the
+        // call site itself.)
+        if (repo.disabled) return;
         self.markWriting(repo.owner, repo.name);
         defer self.clearWriting();
         self.beginRepo(repo.owner, repo.name);
@@ -1070,6 +1098,9 @@ pub const App = struct {
         };
         var built: usize = 0;
         for (self.cfg.repos) |r| {
+            // Disabled repos are fully out of the update pipeline: no check,
+            // no download, no refresh until the user re-enables them.
+            if (r.disabled) continue;
             if (single and !(std.mem.eql(u8, r.owner, single_owner.?) and std.mem.eql(u8, r.name, single_name.?))) continue;
             repos[built] = dupeRepo(self.allocator, r) catch break;
             built += 1;
@@ -1458,6 +1489,80 @@ fn cbRemoveRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(
     respond(app, id, if (ok) "true" else "false");
 }
 
+/// toggleRepo("owner/name") → "" on success, else a short reason ("busy",
+/// "not tracked", "not installed", "failed"). Renames the installed jar
+/// between `NAME` and `NAME.disabled` (loaders only pick up `*.jar`, so the
+/// disabled copy is ignored) and persists the per-repo flag — the repo then
+/// stays out of the update pipeline until it is re-enabled. Rejected while a
+/// refresh worker runs (it snapshots `cfg.repos` when it starts).
+fn cbToggleRepo(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
+    const app = appFromArg(arg);
+    var spec: []const u8 = undefined;
+    if (!firstStringArg(app, req, &spec)) {
+        respond(app, id, "bad request");
+        return;
+    }
+    defer app.allocator.free(spec);
+
+    // Cheap pre-check before touching the config (mirrors cbSelectProfile).
+    if (app.refreshing.load(.acquire)) {
+        respond(app, id, "busy");
+        return;
+    }
+
+    const owner, const name = (parseOwnerName(spec) orelse {
+        respond(app, id, "not tracked");
+        return;
+    });
+
+    app.mutex.lock();
+    defer app.mutex.unlock();
+
+    if (app.refreshing.load(.acquire)) {
+        respond(app, id, "busy");
+        return;
+    }
+
+    var found: ?usize = null;
+    for (app.cfg.repos, 0..) |r, i| {
+        if (std.mem.eql(u8, r.owner, owner) and std.mem.eql(u8, r.name, name)) {
+            found = i;
+            break;
+        }
+    }
+    const i = found orelse {
+        respond(app, id, "not tracked");
+        return;
+    };
+    const jar_name = app.cfg.repos[i].installedJar orelse {
+        respond(app, id, "not installed");
+        return;
+    };
+    const target = !app.cfg.repos[i].disabled;
+
+    const mods = install.modsDir(app.allocator, app.cfg.minecraftDir) catch {
+        respond(app, id, "failed");
+        return;
+    };
+    defer app.allocator.free(mods);
+
+    install.setJarDisabled(app.allocator, mods, jar_name, target) catch {
+        respond(app, id, "failed");
+        return;
+    };
+
+    app.cfg.repos[i].disabled = target;
+    // Keep the built state row in step with the config (only the bool moves;
+    // the row's strings stay owned and untouched).
+    if (app.stateSlotLocked(owner, name)) |s| s.disabled = target;
+
+    if (config_mod.save(&app.cfg)) {
+        respond(app, id, "");
+    } else |_| {
+        respond(app, id, "failed");
+    }
+}
+
 /// startRefresh() → "true" if a worker was spawned, "false" if one is already
 /// running (or spawning failed). Returns immediately; UI stays responsive.
 fn cbStartRefresh(id: [*c]const u8, req: [*c]const u8, arg: ?*anyopaque) callconv(.c) void {
@@ -1673,6 +1778,7 @@ fn dupeRepo(allocator: Allocator, src: Repo) !Repo {
         .name = name,
         .installedVersion = installed_version,
         .installedJar = installed_jar,
+        .disabled = src.disabled,
     };
 }
 
@@ -1844,11 +1950,33 @@ test "buildStateJson: statuses pair by owner+name, not by index" {
 
     // Rows come out in cfg.repos order, each carrying the status that
     // matched ITS owner+name (not whatever happened to share an index):
-    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"status\":\"installed v0.1.2\",\"latestVersion\":\"v0.1.2\",\"stage\":\"idle\",\"error\":null,\"availableVersion\":null,\"icon\":null}";
-    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"status\":\"no releases\",\"latestVersion\":null,\"stage\":\"idle\",\"error\":null,\"availableVersion\":null,\"icon\":null}";
+    const gore_row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"disabled\":false,\"status\":\"installed v0.1.2\",\"latestVersion\":\"v0.1.2\",\"stage\":\"idle\",\"error\":null,\"availableVersion\":null,\"icon\":null}";
+    const surprise_row = "{\"owner\":\"desocketed\",\"name\":\"surprise\",\"installedVersion\":null,\"installedJar\":null,\"disabled\":false,\"status\":\"no releases\",\"latestVersion\":null,\"stage\":\"idle\",\"error\":null,\"availableVersion\":null,\"icon\":null}";
     const gore_at = std.mem.indexOf(u8, json, gore_row) orelse return error.TestUnexpectedResult;
     const surprise_at = std.mem.indexOf(u8, json, surprise_row) orelse return error.TestUnexpectedResult;
     try std.testing.expect(gore_at < surprise_at);
+}
+
+test "buildStateJson: a disabled repo row serializes \"disabled\":true" {
+    var repos = [1]Repo{
+        .{ .owner = "cumsauce", .name = "gore", .installedVersion = "v0.1.2", .installedJar = "gore-0.1.2.jar", .disabled = true },
+    };
+    const cfg = Config{ .minecraftDir = "/tmp/mc", .githubToken = null, .repos = &repos };
+    const statuses = [1]RepoStatus{
+        .{ .owner = "cumsauce", .name = "gore", .status = "installed v0.1.2" },
+    };
+
+    const json = try buildStateJson(std.testing.allocator, &cfg, &statuses, false);
+    defer std.testing.allocator.free(json);
+
+    const row = "{\"owner\":\"cumsauce\",\"name\":\"gore\",\"installedVersion\":\"v0.1.2\",\"installedJar\":\"gore-0.1.2.jar\",\"disabled\":true,\"status\":\"installed v0.1.2\",\"latestVersion\":null,\"stage\":\"idle\",\"error\":null,\"availableVersion\":null,\"icon\":null}";
+    try std.testing.expect(std.mem.indexOf(u8, json, row) != null);
+
+    // The flag is a plain bool on Repo, so the deep clone carries it too
+    // (dupeRepo/cloneConfig round-trip — a bool is copied by value).
+    const cloned = try cloneConfig(std.testing.allocator, cfg);
+    defer config_mod.freeConfig(std.testing.allocator, cloned);
+    try std.testing.expect(cloned.repos[0].disabled);
 }
 
 test "buildStateJson: repo without a status row gets an empty status" {

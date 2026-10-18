@@ -94,8 +94,12 @@ build with).
   (`{repo}-*.jar`) and leaves every other file in `mods/` untouched.
 - Already-up-to-date mods are skipped (same tag **and** the jar is present).
 - Rows are grouped by status — **Up to date**, **Update available**,
-  **Not installed**, **Not checked**, **Errors** — with problem groups first,
-  instead of being grouped by author.
+  **Not installed**, **Not checked**, **Disabled**, **Errors** — with problem
+  groups first, instead of being grouped by author.
+- Every row has a switch that disables the mod (the jar is renamed to
+  `<jar>.disabled`, which Minecraft ignores) and re-enables it. While disabled,
+  a mod is left completely alone — no update checks and no jar refresh — until
+  you switch it back on.
 - Updates run one repo at a time and each row reports its stage: Checking →
   Downloading → Installing → Success/Error.
 - Seed repos: `cumsauce/gore`, `cumsauce/foley`, `cumsauce/earshot`,
@@ -146,7 +150,8 @@ Then launch it directly:
   Success/Error, reported on each row. The button reads **Updating…** and is
   disabled during a run; the install can't be switched while updates run.
 - **Tracked mods** — grouped by status rather than author: **Up to date**,
-  **Update available**, **Not installed**, **Not checked**, and **Errors**,
+  **Update available**, **Not installed**, **Not checked**, **Disabled**, and
+  **Errors**,
   with only non-empty groups drawn. Problems come first; each row shows its
   installed version, or the available release for a mod that isn't installed.
 - **⋯ menu** — per-repo actions: **Update mod** / **Install mod** / **Retry**

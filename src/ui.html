@@ -450,6 +450,56 @@ h1, h2, h3, p { margin: 0; }
   opacity: 1;
   background: rgba(255,255,255,0.07);
 }
+.row-switch {
+  flex: none;
+  display: flex;
+  align-items: center;
+  width: 20px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  cursor: pointer;
+  transition: background-color .2s ease, border-color .2s ease, opacity .2s ease;
+}
+.row-switch:hover:not(:disabled) { border-color: var(--dim); }
+.row-switch[aria-checked="true"] {
+  background: var(--primary-border);
+  border-color: var(--focus);
+}
+.row-switch:disabled,
+.row-switch.row-switch-offline {
+  cursor: default;
+  opacity: .3;
+  background: rgba(255,255,255,0.06);
+  border-color: var(--line);
+}
+.row-switch-knob {
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: transform .2s ease, background-color .2s ease;
+}
+.row-switch[aria-checked="true"] .row-switch-knob {
+  transform: translateX(6px);
+  background: var(--focus);
+}
+/* Unavailable rows (no jar installed): dim gray pill, knob parked off, even
+   though aria-checked still reports the (always-on) state. */
+.row-switch:disabled .row-switch-knob,
+.row-switch.row-switch-offline .row-switch-knob {
+  transform: none;
+  background: var(--dim);
+}
+.mod-row.is-disabled .identity,
+.mod-row.is-disabled .icon-tile,
+.mod-row.is-disabled .status-edge { opacity: .45; }
+.mod-row.is-disabled .icon-tile { filter: grayscale(1); }
+.version.version-disabled { color: var(--faint); }
 
 .empty {
   padding: 18px 2px;
@@ -817,9 +867,10 @@ h1, h2, h3, p { margin: 0; }
     outdated: { label: "Update available", edge: "--outdated" },
     missing: { label: "Not installed", edge: "--missing" },
     unchecked: { label: "Not checked", edge: "--line" },
+    disabled: { label: "Disabled", edge: "--faint" },
     latest: { label: "Up to date", edge: "--latest" }
   };
-  const STATE_ORDER = ["error", "outdated", "missing", "unchecked", "latest"];
+  const STATE_ORDER = ["error", "outdated", "missing", "unchecked", "disabled", "latest"];
   const ACTIVE_STAGES = new Set(["checking", "downloading", "installing"]);
 
   /* ------------------------------------------------------- bridge utils */
@@ -903,6 +954,13 @@ h1, h2, h3, p { margin: 0; }
     });
   }
 
+  // The per-mod switch is inert while this repo's own stage is in flight or
+  // the top-level update flag is set (mirrors the Zig-side guard).
+  function repoToggleBlocked(repo) {
+    if (appState.updating || localUpdating) return true;
+    return ACTIVE_STAGES.has(String(repo.stage || "").toLowerCase());
+  }
+
   /* ------------------------------------------------------------ state io */
 
   function normalizeRepoShape(r) {
@@ -911,6 +969,7 @@ h1, h2, h3, p { margin: 0; }
       owner: String(r.owner == null ? "" : r.owner),
       name: String(r.name == null ? "" : r.name),
       installed: r.installed === true,
+      disabled: r.disabled === true,
       latest: typeof r.latest === "boolean" ? r.latest : undefined,
       status: typeof r.status === "string" ? r.status : "",
       installedVersion: r.installedVersion == null ? "" : String(r.installedVersion),
@@ -923,6 +982,9 @@ h1, h2, h3, p { margin: 0; }
   }
 
   function repoState(repo) {
+    // The kill switch wins over every derived state — a disabled mod is
+    // never checked, so its status/stage text is stale by definition.
+    if (repo.disabled) return "disabled";
     const stage = String(repo.stage || "").toLowerCase();
     const raw = String(repo.status || "").trim().toLowerCase();
     if (stage === "error" || repo.error) return "error";
@@ -1028,12 +1090,16 @@ h1, h2, h3, p { margin: 0; }
 
     const active = document.activeElement;
     let focusRef = null;
-    if (active && active.classList && active.classList.contains("row-menu-trigger")) {
+    if (active && active.classList &&
+        (active.classList.contains("row-menu-trigger") ||
+         active.classList.contains("row-switch"))) {
       const row = active.closest(".mod-row");
       if (row) {
         focusRef = {
           owner: row.getAttribute("data-owner"),
-          name: row.getAttribute("data-name")
+          name: row.getAttribute("data-name"),
+          selector: active.classList.contains("row-switch")
+            ? ".row-switch" : ".row-menu-trigger"
         };
       }
     }
@@ -1055,8 +1121,8 @@ h1, h2, h3, p { margin: 0; }
           break;
         }
       }
-      const trigger = targetRow ? targetRow.querySelector(".row-menu-trigger") : null;
-      if (trigger) trigger.focus();
+      const target = targetRow ? targetRow.querySelector(focusRef.selector) : null;
+      if (target && !target.disabled) target.focus();
       else listEl.focus();
     }
   }
@@ -1145,7 +1211,7 @@ h1, h2, h3, p { margin: 0; }
     }
     listEl.removeAttribute("aria-busy");
 
-    const groups = { error: [], outdated: [], missing: [], unchecked: [], latest: [] };
+    const groups = { error: [], outdated: [], missing: [], unchecked: [], disabled: [], latest: [] };
     for (const repo of repos) groups[repoState(repo)].push(repo);
 
     for (const key of STATE_ORDER) {
@@ -1210,6 +1276,7 @@ h1, h2, h3, p { margin: 0; }
     const full = fullName(repo);
     const row = document.createElement("div");
     row.className = "mod-row";
+    if (repo.disabled) row.classList.add("is-disabled");
     row.setAttribute("data-owner", repo.owner);
     row.setAttribute("data-name", repo.name);
     row.setAttribute("data-state", stateKey);
@@ -1232,6 +1299,32 @@ h1, h2, h3, p { margin: 0; }
 
     const version = buildVersionCell(repo, full);
 
+    const sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "row-switch";
+    // Nothing to switch until a jar is installed: the control is moot, so it
+    // is natively disabled (the prefire guard stays as belt-and-braces).
+    if (!isInstalled(repo)) {
+      sw.classList.add("row-switch-offline");
+      sw.disabled = true;
+    }
+    sw.setAttribute("role", "switch");
+    sw.setAttribute("aria-checked", repo.disabled ? "false" : "true");
+    const switchLabel = (repo.disabled ? "Enable " : "Disable ") + full;
+    sw.setAttribute("aria-label", switchLabel);
+    sw.setAttribute("data-tip", switchLabel);
+    const knob = document.createElement("span");
+    knob.className = "row-switch-knob";
+    knob.setAttribute("aria-hidden", "true");
+    sw.appendChild(knob);
+    if (repoToggleBlocked(repo)) sw.disabled = true;
+    sw.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (sw.disabled || sw.classList.contains("row-switch-offline") || repoToggleBlocked(repo)) return;
+      sw.disabled = true; // prefire lock; the re-render after load() restores it
+      runRepoToggle(repo);
+    });
+
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.className = "row-menu-trigger";
@@ -1249,11 +1342,20 @@ h1, h2, h3, p { margin: 0; }
       openRowMenu(repo, trigger);
     });
 
-    row.append(edge, tile, identity, version, trigger);
+    row.append(edge, tile, identity, version, sw, trigger);
     return row;
   }
 
   function buildVersionCell(repo, full) {
+    if (repo.disabled) {
+      const el = document.createElement("span");
+      el.className = "version version-disabled";
+      el.textContent = "Disabled";
+      el.title = "Disabled — checks and updates are paused for this mod";
+      el.setAttribute("aria-label", full + ": disabled");
+      return el;
+    }
+
     const stage = String(repo.stage || "").toLowerCase();
     const stageLabel = stage === "checking" ? "Checking…"
       : stage === "downloading" ? "Downloading…"
@@ -1632,6 +1734,27 @@ h1, h2, h3, p { margin: 0; }
       return;
     }
     await load();
+  }
+
+  async function runRepoToggle(repo) {
+    const full = fullName(repo);
+    const enabling = !!repo.disabled;
+    let res = null;
+    try {
+      res = await call("toggleRepo", full);
+    } catch (e) {
+      res = "failed";
+    }
+    // Zig answers "" on success and a short reason string otherwise; the
+    // toggle does not push state by itself, so always re-fetch afterwards
+    // (same contract as the remove confirm).
+    const reason = typeof res === "string" ? res.trim() : "";
+    await load();
+    if (reason) {
+      announce("Couldn't " + (enabling ? "enable " : "disable ") + full + " (" + reason + ")", true);
+      return;
+    }
+    announce((enabling ? "Enabled " : "Disabled ") + full);
   }
 
   async function openGithub(repo) {
